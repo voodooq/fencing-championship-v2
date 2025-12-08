@@ -38,7 +38,7 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
       //console.log("Fetching event data...")
 
       // Fetch event details
-      const eventResponse = await fetch(buildApiUrl("/api/getAllData", {}, params.sportCode), {
+      const eventResponse = await fetch(buildApiUrl("/api/getAllData", { timestamp: Date.now().toString() }, params.sportCode), {
         cache: "no-store",
         headers: {
           "Cache-Control": "no-cache",
@@ -66,6 +66,7 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
           {
             eventCode: encodeURIComponent(params.name),
             directory: directory,
+            timestamp: Date.now().toString(),
           },
           params.sportCode,
         ),

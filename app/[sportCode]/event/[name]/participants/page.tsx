@@ -75,7 +75,7 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
       setLoading(true)
 
       // Fetch event details
-      const eventResponse = await fetch(buildApiUrl("/api/getAllData", {}, params.sportCode))
+      const eventResponse = await fetch(buildApiUrl("/api/getAllData", { timestamp: Date.now().toString() }, params.sportCode))
       if (!eventResponse.ok) {
         throw new Error(`HTTP error! status: ${eventResponse.status} when fetching event details`)
       }
@@ -96,6 +96,7 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
           {
             eventCode: encodeURIComponent(params.name),
             directory: directory,
+            timestamp: Date.now().toString(),
           },
           params.sportCode,
         ),

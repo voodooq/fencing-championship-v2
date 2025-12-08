@@ -125,6 +125,7 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
           {
             eventCode: encodeURIComponent(params.name),
             directory: "poolResult",
+            timestamp: Date.now().toString(),
           },
           params.sportCode,
         ),
@@ -163,6 +164,7 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
           {
             eventCode: encodeURIComponent(params.name),
             directory: "poolRank",
+            timestamp: Date.now().toString(),
           },
           params.sportCode,
         ),
