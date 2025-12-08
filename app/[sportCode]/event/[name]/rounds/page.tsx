@@ -118,6 +118,12 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
         })
         setLoading(false)
       })
+
+      const intervalId = setInterval(() => {
+        fetchEventData().catch(console.error)
+      }, 5000)
+
+      return () => clearInterval(intervalId)
     }
   }, [params])
 
@@ -156,8 +162,8 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
                   dangerouslySetInnerHTML={{
                     __html: eventFormat.FormatPoolDesc
                       ? eventFormat.FormatPoolDesc.split(/[;；]/)
-                          .map((part) => `<p>${part.trim()}</p>`)
-                          .join("")
+                        .map((part) => `<p>${part.trim()}</p>`)
+                        .join("")
                       : "No description available",
                   }}
                 />
@@ -172,8 +178,8 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
                   dangerouslySetInnerHTML={{
                     __html: eventFormat.FormatEliDesc
                       ? eventFormat.FormatEliDesc.split(/[;；]/)
-                          .map((part) => `<p>${part.trim()}</p>`)
-                          .join("")
+                        .map((part) => `<p>${part.trim()}</p>`)
+                        .join("")
                       : "No description available",
                   }}
                 />

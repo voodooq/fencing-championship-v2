@@ -135,6 +135,12 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
   useEffect(() => {
     if (params?.sportCode && params?.name) {
       fetchEventAndParticipants()
+
+      const intervalId = setInterval(() => {
+        fetchEventAndParticipants()
+      }, 5000)
+
+      return () => clearInterval(intervalId)
     }
   }, [fetchEventAndParticipants, params])
 

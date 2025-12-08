@@ -100,6 +100,14 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
         console.error("Unhandled error in fetchData:", error)
         setLoading(false)
       })
+
+      const intervalId = setInterval(() => {
+        fetchData().catch((error) => {
+          console.error("Unhandled error in fetchData polling:", error)
+        })
+      }, 5000)
+
+      return () => clearInterval(intervalId)
     }
   }, [params])
 
@@ -301,11 +309,11 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
                               "p-2 text-center border-r border-white",
                               idx === colIdx && "bg-gray-900",
                               (fencer[`r${colIdx + 1}` as keyof PoolFencer] as string)?.includes("V") &&
-                                "bg-green-500 text-white",
+                              "bg-green-500 text-white",
                               typeof fencer[`r${colIdx + 1}` as keyof PoolFencer] === "string" &&
-                                !(fencer[`r${colIdx + 1}` as keyof PoolFencer] as string)?.includes("V") &&
-                                fencer[`r${colIdx + 1}` as keyof PoolFencer] !== "*" &&
-                                "bg-red-500 text-white",
+                              !(fencer[`r${colIdx + 1}` as keyof PoolFencer] as string)?.includes("V") &&
+                              fencer[`r${colIdx + 1}` as keyof PoolFencer] !== "*" &&
+                              "bg-red-500 text-white",
                             )}
                           >
                             {fencer[`r${colIdx + 1}` as keyof PoolFencer]}

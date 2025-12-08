@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
       try {
         const response = await fetch(fileUrl, {
-          next: { revalidate: 60 }, // Revalidate every 60 seconds
+          next: { revalidate: 3 }, // Revalidate every 3 seconds
         })
 
         if (!response.ok) {

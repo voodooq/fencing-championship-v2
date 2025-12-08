@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
   //console.log("Fetching data from:", dataUrl)
 
   try {
-    const response = await fetch(dataUrl, { next: { revalidate: 60 } })
+    const response = await fetch(dataUrl, { next: { revalidate: 3 } })
 
     if (!response.ok) {
       console.error(`Failed to fetch ${dataUrl}: ${response.status} ${response.statusText}`)

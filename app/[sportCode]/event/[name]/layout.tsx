@@ -100,15 +100,22 @@ export default function EventLayout({
         return
       }
 
-      fetchData().catch((error) => {
-        console.error("Error in useEffect:", error)
-        setError({
-          error: "UNKNOWN_ERROR",
-          message: "发生未知错误",
-          details: `${error instanceof Error ? error.message : JSON.stringify(error)}`,
-          sportCode: params.sportCode,
+      const load = () => {
+        fetchData().catch((error) => {
+          console.error("Error in useEffect:", error)
+          setError({
+            error: "UNKNOWN_ERROR",
+            message: "发生未知错误",
+            details: `${error instanceof Error ? error.message : JSON.stringify(error)}`,
+            sportCode: params.sportCode,
+          })
         })
-      })
+      }
+
+      load()
+
+      const intervalId = setInterval(load, 5000)
+      return () => clearInterval(intervalId)
     }
   }, [params])
 

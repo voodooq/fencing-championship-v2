@@ -76,6 +76,9 @@ export default function RankingsPage({ params }: { params: { sportCode: string; 
     }
 
     fetchData()
+
+    const intervalId = setInterval(fetchData, 5000)
+    return () => clearInterval(intervalId)
   }, [params])
 
   if (!params?.sportCode || !params?.name || loading) {
