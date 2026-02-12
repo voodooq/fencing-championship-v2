@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import LoadingOverlay from "@/components/loading"
 import { buildApiUrl } from "@/lib/sport-config"
+import { DATA_POLLING_INTERVAL } from "@/config/site"
 
 interface PoolFencer {
   eventCode: string
@@ -102,52 +103,54 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
       })
 
       const intervalId = setInterval(() => {
-        fetchData().catch((error) => {
+        fetchData(true).catch((error) => {
           console.error("Unhandled error in fetchData polling:", error)
         })
-      }, 5000)
+      }, DATA_POLLING_INTERVAL)
 
       return () => clearInterval(intervalId)
     }
   }, [params])
 
-  const fetchData = async () => {
+  const fetchData = async (isPolling = false) => {
     if (!params?.sportCode || !params?.name) return
 
     try {
-      setLoading(true)
+      if (!isPolling) setLoading(true)
       setError(null)
 
-      // Fetch pool results
-      const resultResponse = await fetch(
-        buildApiUrl(
-          "/api/getSysData",
-          {
-            eventCode: encodeURIComponent(params.name),
-            directory: "poolResult",
-            timestamp: Date.now().toString(),
-          },
-          params.sportCode,
-        ),
-        {
-          cache: "no-store",
-          headers: {
-            "Cache-Control": "no-cache",
-            Pragma: "no-cache",
-          },
+      const batchResponse = await fetch("/api/batchFetch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      )
-      if (!resultResponse.ok) {
-        throw new Error(`HTTP error! status: ${resultResponse.status} when fetching pool results`)
+        body: JSON.stringify({
+          sportCode: params.sportCode,
+          requests: [
+            { key: "poolResult", directory: "poolResult", eventCode: params.name },
+            { key: "poolRank", directory: "poolRank", eventCode: params.name },
+          ],
+        }),
+      })
+
+      if (!batchResponse.ok) {
+        throw new Error(`Batch fetch failed: ${batchResponse.status}`)
       }
-      const resultData = await resultResponse.json()
+
+      const batchData = await batchResponse.json()
+
+      // Process poolResult
+      const resultData = batchData.poolResult
+      if (resultData.error) {
+        throw new Error(`Error fetching pool results: ${resultData.status || resultData.message}`)
+      }
       if (!Array.isArray(resultData) || resultData.length < 2) {
         throw new Error(`Invalid data structure received: ${JSON.stringify(resultData)}`)
       }
 
       if (
         !Array.isArray(resultData[0]) ||
-        resultData[0].some((fencer) => typeof fencer !== "object" || !("eventCode" in fencer))
+        resultData[0].some((fencer: any) => typeof fencer !== "object" || !("eventCode" in fencer))
       ) {
         throw new Error(`Invalid fencers data structure received: ${JSON.stringify(resultData[0])}`)
       }
@@ -157,33 +160,17 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
       }
       setPoolData(fetchedPoolData)
 
-      // Fetch pool rankings
-      const rankResponse = await fetch(
-        buildApiUrl(
-          "/api/getSysData",
-          {
-            eventCode: encodeURIComponent(params.name),
-            directory: "poolRank",
-            timestamp: Date.now().toString(),
-          },
-          params.sportCode,
-        ),
-        {
-          cache: "no-store",
-          headers: {
-            "Cache-Control": "no-cache",
-            Pragma: "no-cache",
-          },
-        },
-      )
-      if (!rankResponse.ok) {
-        throw new Error(`HTTP error! status: ${rankResponse.status} when fetching pool rankings`)
+      // Process poolRank
+      const rankData = batchData.poolRank
+      if (rankData.error) {
+        // Silently fail or log if rank data is missing, or throw if critical
+        console.warn(`Error fetching pool rankings: ${rankData.status || rankData.message}`)
       }
-      const rankData = await rankResponse.json()
-      if (!Array.isArray(rankData)) {
-        throw new Error(`Invalid ranking data structure received: ${JSON.stringify(rankData)}`)
+      if (Array.isArray(rankData)) {
+        setPoolRankings(rankData)
+      } else {
+        setPoolRankings([])
       }
-      setPoolRankings(rankData)
 
       // Group and sort fencers by pool
       const groupedFencers = fetchedPoolData.fencers.reduce(
@@ -212,7 +199,7 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
         })
       }
     } finally {
-      setLoading(false)
+      if (!isPolling) setLoading(false)
     }
   }
 
@@ -240,7 +227,7 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
         <div className={`text-lg ${error.type === "no_data" ? "text-gray-600" : "text-red-500"} mb-4`}>
           {error.message}
         </div>
-        {error.type === "other" && <Button onClick={fetchData}>重试</Button>}
+        {error.type === "other" && <Button onClick={() => fetchData()}>重试</Button>}
       </div>
     )
   }

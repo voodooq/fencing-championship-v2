@@ -3,6 +3,8 @@ import { type NextRequest, NextResponse } from "next/server"
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
 
+import { DATA_REFRESH_INTERVAL } from "@/config/site"
+
 const validDirectories = [
   "dualPhase",
   "dualPhaseMatch",
@@ -48,7 +50,7 @@ export async function GET(request: NextRequest) {
   //console.log("Fetching data from:", dataUrl)
 
   try {
-    const response = await fetch(dataUrl, { next: { revalidate: 3 } })
+    const response = await fetch(dataUrl, { next: { revalidate: DATA_REFRESH_INTERVAL } })
 
     if (!response.ok) {
       console.error(`Failed to fetch ${dataUrl}: ${response.status} ${response.statusText}`)

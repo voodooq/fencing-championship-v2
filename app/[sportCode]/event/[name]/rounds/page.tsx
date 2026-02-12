@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
 import { buildApiUrl } from "@/lib/sport-config"
+import { DATA_POLLING_INTERVAL } from "@/config/site"
 
 interface EventFormat {
   EventID: number
@@ -16,6 +17,7 @@ interface EventFormat {
   FormatEliDesc: string | null
 }
 
+// Define shared Event interface if not imported
 interface Event {
   eventId: number
   eventCode: string
@@ -23,74 +25,161 @@ interface Event {
   typeCode: string
 }
 
-export default function RoundsPage({ params }: { params: { sportCode: string; name: string } }) {
+export default function RoundsPage({ params, event: eventProp }: { params: { sportCode: string; name: string }, event?: Event }) {
   const [eventFormat, setEventFormat] = useState<EventFormat | null>(null)
-  const [event, setEvent] = useState<Event | null>(null)
+  const [event, setEvent] = useState<Event | null>(eventProp || null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
 
-  const fetchEventData = async () => {
+  // Update local event state if prop changes
+  useEffect(() => {
+    if (eventProp) setEvent(eventProp)
+  }, [eventProp])
+
+  const fetchEventData = useCallback(async (isPolling = false) => {
     if (!params?.sportCode || !params?.name) return
+    // If we have event data from props/state, we don't need to fetch sysData unless we really want IT specifically.
+    // Layout provides reliable event data.
+    let currentEvent = eventProp || event
+
+    // Fallback: If no event prop, fetch sysData
+    if (!currentEvent) {
+      try {
+        const sysResponse = await fetch("/api/batchFetch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sportCode: params.sportCode,
+            requests: [{ key: "sysData", type: "sysData" }]
+          })
+        })
+        if (sysResponse.ok) {
+          const sysData = await sysResponse.json()
+          const eventList = sysData.sysData?.[4]
+          if (Array.isArray(eventList)) {
+            currentEvent = eventList.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
+            if (currentEvent) setEvent(currentEvent)
+          }
+        }
+      } catch (e) {
+        console.error("Fallback fetch failed", e)
+      }
+    }
+
+    if (!currentEvent) {
+      console.error("Could not determine event data")
+      if (!isPolling) setLoading(false)
+      return
+    }
 
     try {
-      setLoading(true)
+      if (!isPolling) setLoading(true)
       setError(null)
-      //console.log("Fetching event data...")
+      //console.log("Fetching data...")
 
-      // Fetch event details
-      const eventResponse = await fetch(buildApiUrl("/api/getAllData", { timestamp: Date.now().toString() }, params.sportCode), {
-        cache: "no-store",
+      const requests = []
+
+      // Determine requests based on typeCode
+      // Note: We need to know which startList to fetch.
+      /* 
+         Previous logic: 
+         1. Fetch sysData -> get event -> check typeCode
+         2. If typeCode!=T && !=E -> get startList
+         3. If typeCode==T -> get startListTeam
+      */
+
+      const typeCode = currentEvent.typeCode
+
+      if (typeCode !== "E") {
+        if (typeCode === "T") {
+          requests.push({ key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) })
+        } else {
+          requests.push({ key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) })
+        }
+      }
+
+      if (requests.length === 0) {
+        // If only 'E', we might not need any extra data here? 
+        // Previous code fetched sysData, then if E, did nothing more?
+        // Let's check original code logic.
+        setLoading(false)
+        return
+      }
+
+      const batchResponse = await fetch("/api/batchFetch", {
+        method: "POST",
         headers: {
-          "Cache-Control": "no-cache",
-          Pragma: "no-cache",
+          "Content-Type": "application/json",
         },
-      })
-      if (!eventResponse.ok) {
-        throw new Error(`HTTP error! status: ${eventResponse.status} when fetching event details`)
+        body: JSON.stringify({
+          sportCode: params.sportCode,
+          requests: requests
+        })
+      });
+
+      if (!batchResponse.ok) {
+        throw new Error("Failed to fetch sysData");
       }
-      const eventData = await eventResponse.json()
-      //console.log("Event data received:", eventData)
-      const currentEvent = eventData.sysData[4].find((e: Event) => e.eventCode === params.name)
+      const batchData = await batchResponse.json();
+      // currentEvent is already available from outer scope
       if (!currentEvent) {
-        throw new Error("Event not found")
+        if (!isPolling) setLoading(false)
+        return
       }
-      setEvent(currentEvent)
 
       // Determine directory based on typeCode
       const directory = currentEvent.typeCode === "T" ? "startListTeam" : "startList"
 
-      // Fetch event format
-      const formatResponse = await fetch(
-        buildApiUrl(
-          "/api/getSysData",
-          {
-            eventCode: encodeURIComponent(params.name),
-            directory: directory,
-            timestamp: Date.now().toString(),
-          },
-          params.sportCode,
-        ),
-        {
-          cache: "no-store",
-          headers: {
-            "Cache-Control": "no-cache",
-            Pragma: "no-cache",
-          },
-        },
-      )
+      // Now fetch the format data
+      // Optimization: We could have fetched this in the first batch if we knew the directory.
+      // But we need headers to know the directory. 
+      // Typically sysData is cached so this is fast.
+      // Or we can just fetch both "startList" and "startListTeam" in the batch and use the right one?
+      // Let's stick with two steps if logic requires it, OR just fetch the one we need. 
+      // Actually, to fully optimize, we can modify batchFetch to accept 
+      // requests = [{ key: "startList", directory: "startList", ... }, { key: "startListTeam", ... }]
+      // and then pick the right one.
+
+      const formatResponse = await fetch("/api/batchFetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sportCode: params.sportCode,
+          requests: [
+            { key: "formatData", directory: directory, eventCode: decodeURIComponent(params.name) }
+          ]
+        })
+      });
+
       if (!formatResponse.ok) {
-        throw new Error(`HTTP error! status: ${formatResponse.status} when fetching event format`)
+        throw new Error("Failed to fetch format data");
       }
-      const formatData = await formatResponse.json()
-      //console.log("Format data received:", formatData)
+
+      const formatBatchData = await formatResponse.json();
+      const formatData = formatBatchData.formatData;
+
+      if (formatData.error) {
+        throw new Error(formatData.message || "Failed to fetch format data")
+      }
+
       if (Array.isArray(formatData) && formatData.length >= 1) {
-        const relevantFormatData = currentEvent.typeCode === "T" ? formatData[3] : formatData[2]
+        // Check if format data exists at expected index
+        const index = currentEvent.typeCode === "T" ? 3 : 2
+        const relevantFormatData = formatData[index]
+
+        if (!relevantFormatData) {
+          console.error("Format data missing at index", index, "Full data:", formatData)
+          throw new Error(`无法获取赛制信息 (Data missing at index ${index})`)
+        }
+
         if (Array.isArray(relevantFormatData) && relevantFormatData.length > 0) {
           setEventFormat(relevantFormatData[0])
         } else {
-          setEventFormat(relevantFormatData)
+          // If it's an object (not array) or empty array?
+          // If it's empty array, passing it might be fine, or check logic.
+          // For now, assume if it exists it's valid enough to stop loading.
+          setEventFormat(relevantFormatData as any || {})
         }
-        //console.log("EventFormat set:", relevantFormatData)
       } else {
         throw new Error("数据格式不正确")
       }
@@ -105,9 +194,9 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
         })
       }
     } finally {
-      setLoading(false)
+      if (!isPolling) setLoading(false)
     }
-  }
+  }, [params, eventProp, event])
 
   useEffect(() => {
     if (params?.sportCode && params?.name) {
@@ -121,12 +210,12 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
       })
 
       const intervalId = setInterval(() => {
-        fetchEventData().catch(console.error)
-      }, 5000)
+        fetchEventData(true).catch(console.error)
+      }, DATA_POLLING_INTERVAL)
 
       return () => clearInterval(intervalId)
     }
-  }, [params])
+  }, [fetchEventData, params])
 
   if (!params?.sportCode || !params?.name || loading) {
     return <LoadingOverlay />

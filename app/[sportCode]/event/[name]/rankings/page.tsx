@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
 import { buildApiUrl } from "@/lib/sport-config"
+import { DATA_POLLING_INTERVAL } from "@/config/site"
 
 interface Athlete {
   rank: number
@@ -26,9 +27,9 @@ export default function RankingsPage({ params }: { params: { sportCode: string; 
   useEffect(() => {
     if (!params?.sportCode || !params?.name) return
 
-    const fetchData = async () => {
+    const fetchData = async (isPolling = false) => {
       try {
-        setLoading(true)
+        if (!isPolling) setLoading(true)
         setError(null)
         const response = await fetch(
           buildApiUrl(
@@ -72,13 +73,13 @@ export default function RankingsPage({ params }: { params: { sportCode: string; 
           })
         }
       } finally {
-        setLoading(false)
+        if (!isPolling) setLoading(false)
       }
     }
 
     fetchData()
 
-    const intervalId = setInterval(fetchData, 5000)
+    const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
     return () => clearInterval(intervalId)
   }, [params])
 

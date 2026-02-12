@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { ChevronLeft, ChevronUp } from "lucide-react"
 import Link from "next/link"
+import { DATA_POLLING_INTERVAL } from "@/config/site"
 import { cn } from "@/lib/utils"
 import { usePathname } from "next/navigation"
 import LoadingOverlay from "@/components/loading"
@@ -114,7 +115,7 @@ export default function EventLayout({
 
       load()
 
-      const intervalId = setInterval(load, 5000)
+      const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
       return () => clearInterval(intervalId)
     }
   }, [params])
@@ -123,11 +124,11 @@ export default function EventLayout({
     setIsModalOpen(isOpen)
   }
 
-  const fetchData = async () => {
+  const fetchData = async (isPolling = false) => {
     if (!params?.sportCode || !params?.name) return
 
     try {
-      setLoading(true)
+      if (!isPolling) setLoading(true)
       setError(null)
       //console.log("Fetching data for sportCode:", params.sportCode)
 
@@ -183,7 +184,7 @@ export default function EventLayout({
         sportCode: params.sportCode,
       })
     } finally {
-      setLoading(false)
+      if (!isPolling) setLoading(false)
     }
   }
 
@@ -314,6 +315,7 @@ export default function EventLayout({
 
         {React.cloneElement(children as React.ReactElement<any>, {
           typeCode: event.typeCode,
+          event: event,
           setModalOpen: setModalState,
           sportCode: params.sportCode,
         })}

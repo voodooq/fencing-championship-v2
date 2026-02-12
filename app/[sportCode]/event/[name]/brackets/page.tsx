@@ -83,33 +83,32 @@ const PlayerCard: FC<{
   showPlacementLabel = true,
   showScore = true,
 }) => (
-  <div
-    className={`rounded-lg overflow-hidden text-white relative ${
-      isWinner ? "border-4 border-yellow-400 shadow-lg shadow-yellow-300/50" : ""
-    } ${isPlacementMatch && showPlacementLabel ? "border-l-4 border-l-purple-500" : ""}`}
-    style={{
-      backgroundColor: color ? (isWinner ? (color.startsWith("#") ? color : `#${color}`) : color) : "#4B9EF9",
-      filter: isWinner ? "brightness(1.2)" : "none",
-    }}
-  >
-    <div className="flex items-center">
-      <div className="w-10 py-2 text-center font-bold border-r border-white/20">
-        {initialRanking !== undefined && initialRanking !== null ? initialRanking : "-"}
-      </div>
-      <div className={`flex-1 flex flex-col justify-center px-3 py-2 ${!showScore ? "pr-3" : ""}`}>
-        <span className={`text-nowrap ${isWinner ? "font-semibold" : "font-semibold"}`}>
-          {!regId ? "待定" : regId > 0 ? name || "" : "轮空"}
-        </span>
-        <span className="text-sm font-light">{regId && regId > 0 ? organization || "" : "-"}</span>
-      </div>
-      {showScore && (
-        <div className="w-10 py-2 text-center font-bold border-l border-white/20">
-          {score !== undefined && score !== null ? score : "-"}
+    <div
+      className={`rounded-lg overflow-hidden text-white relative ${isWinner ? "border-4 border-yellow-400 shadow-lg shadow-yellow-300/50" : ""
+        } ${isPlacementMatch && showPlacementLabel ? "border-l-4 border-l-purple-500" : ""}`}
+      style={{
+        backgroundColor: color ? (isWinner ? (color.startsWith("#") ? color : `#${color}`) : color) : "#4B9EF9",
+        filter: isWinner ? "brightness(1.2)" : "none",
+      }}
+    >
+      <div className="flex items-center">
+        <div className="w-10 py-2 text-center font-bold border-r border-white/20">
+          {initialRanking !== undefined && initialRanking !== null ? initialRanking : "-"}
         </div>
-      )}
+        <div className={`flex-1 flex flex-col justify-center px-3 py-2 ${!showScore ? "pr-3" : ""}`}>
+          <span className={`text-nowrap ${isWinner ? "font-semibold" : "font-semibold"}`}>
+            {!regId ? "待定" : regId > 0 ? name || "" : "轮空"}
+          </span>
+          <span className="text-sm font-light">{regId && regId > 0 ? organization || "" : "-"}</span>
+        </div>
+        {showScore && (
+          <div className="w-10 py-2 text-center font-bold border-l border-white/20">
+            {score !== undefined && score !== null ? score : "-"}
+          </div>
+        )}
+      </div>
     </div>
-  </div>
-)
+  )
 
 const NextPlayerCard: FC<{
   name: string | null
@@ -134,35 +133,33 @@ const NextPlayerCard: FC<{
   showPlacementLabel = true,
   isPlacementWinner = false,
 }) => (
-  <div
-    className={`rounded-lg overflow-hidden text-white relative ${
-      isPlacementMatch && showPlacementLabel ? "border-l-4 border-l-purple-500" : ""
-    }`}
-    style={{
-      backgroundColor: color ? (color.startsWith("#") ? color : `#${color}`) : "#4B9EF9",
-    }}
-  >
-    <div className="flex items-center">
-      <div className="flex-1 flex items-center justify-between px-2 py-2">
-        <div className="flex items-center">
-          <span className={`text-nowrap ${isWinner || isPlacementWinner ? "font-semibold" : "font-semibold"}`}>
-            {name || "待定"}
-            <span className="text-sm font-light text-right"> {organization || ""}</span>
-          </span>
+    <div
+      className={`rounded-lg overflow-hidden text-white relative ${isPlacementMatch && showPlacementLabel ? "border-l-4 border-l-purple-500" : ""
+        }`}
+      style={{
+        backgroundColor: color ? (color.startsWith("#") ? color : `#${color}`) : "#4B9EF9",
+      }}
+    >
+      <div className="flex items-center">
+        <div className="flex-1 flex items-center justify-between px-2 py-2">
+          <div className="flex items-center">
+            <span className={`text-nowrap ${isWinner || isPlacementWinner ? "font-semibold" : "font-semibold"}`}>
+              {name || "待定"}
+              <span className="text-sm font-light text-right"> {organization || ""}</span>
+            </span>
+          </div>
         </div>
       </div>
+      {result && (
+        <div
+          className={`bg-black/30 py-1 px-3 text-center ${isChampion ? "text-yellow-300" : isThirdPlace ? "text-white" : "text-white"
+            } font-bold`}
+        >
+          {result}
+        </div>
+      )}
     </div>
-    {result && (
-      <div
-        className={`bg-black/30 py-1 px-3 text-center ${
-          isChampion ? "text-yellow-300" : isThirdPlace ? "text-white" : "text-white"
-        } font-bold`}
-      >
-        {result}
-      </div>
-    )}
-  </div>
-)
+  )
 
 const ChampionCard: FC<{
   name: string | null
@@ -824,19 +821,19 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
 
   const matchRefs = useRef<(HTMLDivElement | null)[]>([])
 
-  const fetchBracketData = useCallback(async () => {
+  const fetchBracketData = useCallback(async (isPolling = false) => {
     if (!params?.sportCode || !params?.name) return
 
     try {
-      setLoading(true)
+      if (!isPolling) setLoading(true)
       setError(null)
       console.log("Fetching bracket data...")
       const response = await fetch(
         buildApiUrl(
-          "/api/getSysData",
+          "/api/getBracketData",
           {
-            eventCode: encodeURIComponent(params.name),
-            directory: "dualPhase",
+            eventCode: params.name,
+            timestamp: Date.now().toString(),
           },
           params.sportCode,
         ),
@@ -852,50 +849,20 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
       const data = await response.json()
-      console.log("Raw bracket data received:", data)
-      if (!Array.isArray(data) || data.length === 0) {
+      // console.log("Bracket data received:", data)
+      if (!Array.isArray(data)) {
         throw new Error("Invalid data format received")
       }
 
-      const sortedData = data.sort((a, b) => a.phaseOrder - b.phaseOrder)
-
-      const processedData = await Promise.all(
-        sortedData.map(async (phase) => {
-          const matchResponse = await fetch(
-            buildApiUrl(
-              "/api/getSysData",
-              {
-                eventCode: phase.phaseId.toString(),
-                directory: "dualPhaseMatch",
-              },
-              params.sportCode,
-            ),
-            {
-              cache: "no-store",
-              headers: {
-                "Cache-Control": "no-cache",
-                Pragma: "no-cache",
-              },
-            },
-          )
-          if (!matchResponse.ok) {
-            throw new Error(`HTTP error! status: ${matchResponse.status} when fetching match data`)
-          }
-          const matchData = await matchResponse.json()
-          return {
-            ...phase,
-            matches: matchData,
-          }
-        }),
-      )
-
-      setBracketData(processedData)
-      setCurrentPhaseId(processedData[0]?.phaseId || 0)
+      setBracketData(data)
+      if (!isPolling) {
+        setCurrentPhaseId(data[0]?.phaseId || 0)
+      }
     } catch (error) {
       console.error("Error fetching bracket data:", error)
       setError({ type: "other", message: "暂无对阵数据" })
     } finally {
-      setLoading(false)
+      if (!isPolling) setLoading(false)
     }
   }, [params])
 
@@ -905,6 +872,7 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
         console.error("Unhandled error in fetchBracketData:", error)
         setLoading(false)
       })
+
     }
   }, [fetchBracketData, params])
 
@@ -1174,7 +1142,7 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
                     key={match.matchCode}
                     className="flex items-center gap-4"
                     ref={(el) => {
-                        matchRefs.current[index] = el;
+                      matchRefs.current[index] = el;
                     }}
                   >
                     <div className="w-[calc(50%-0.5rem)] sm:w-[330px] relative">
@@ -1254,9 +1222,8 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
 
                     {nextPhase && (
                       <div
-                        className={`w-[calc(50%-0.5rem)] sm:w-[330px] relative ${
-                          needsExtraSpace ? "ml-32" : "-left-[20px]"
-                        }`}
+                        className={`w-[calc(50%-0.5rem)] sm:w-[330px] relative ${needsExtraSpace ? "ml-32" : "-left-[20px]"
+                          }`}
                       >
                         <NextPlayerCard
                           name={nextPlayerInfo.name}

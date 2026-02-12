@@ -11,6 +11,7 @@ import { buildApiUrl } from "../../lib/sport-config"
 import { isValidSportCode } from "../../config/sports"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
+import { DATA_POLLING_INTERVAL } from "@/config/site"
 
 interface Event {
   eventId: number
@@ -66,16 +67,16 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
 
       fetchData()
 
-      const intervalId = setInterval(fetchData, 5000)
+      const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
       return () => clearInterval(intervalId)
     }
   }, [params])
 
-  const fetchData = async () => {
+  const fetchData = async (isPolling = false) => {
     if (!params?.sportCode) return
 
     try {
-      setLoading(true)
+      if (!isPolling) setLoading(true)
       setError(null)
 
       const response = await fetch(
@@ -145,7 +146,7 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
         sportCode: params.sportCode,
       })
     } finally {
-      setLoading(false)
+      if (!isPolling) setLoading(false)
     }
   }
 

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import LoadingOverlay from "@/components/loading"
 import { buildApiUrl } from "@/lib/sport-config"
+import { DATA_POLLING_INTERVAL } from "@/config/site"
 
 interface CheckInRecord {
   athleteName: string
@@ -27,67 +28,79 @@ interface CheckInPageProps {
   params: { sportCode: string; name: string }
 }
 
-export default function CheckInPage({ params }: CheckInPageProps) {
+export default function CheckInPage({ params, event: eventProp }: CheckInPageProps & { event?: Event }) {
   const [searchQuery, setSearchQuery] = useState("")
   const [checkInData, setCheckInData] = useState<CheckInRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
-  const [event, setEvent] = useState<Event | null>(null)
+  const [event, setEvent] = useState<Event | null>(eventProp || null)
 
-  const fetchData = async () => {
+  useEffect(() => {
+    if (eventProp) setEvent(eventProp)
+  }, [eventProp])
+
+  const fetchData = async (isPolling = false) => {
     if (!params?.sportCode || !params?.name) return
 
     try {
-      setLoading(true)
+      if (!isPolling) setLoading(true)
       setError(null)
 
-      const eventResponse = await fetch(buildApiUrl("/api/getAllData", {}, params.sportCode), {
-        cache: "no-store",
+      let currentEvent = eventProp || event
+      if (!currentEvent) {
+        try {
+          const sysResponse = await fetch("/api/batchFetch", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sportCode: params.sportCode, requests: [{ key: "sysData", type: "sysData" }] })
+          })
+          if (sysResponse.ok) {
+            const sysRes = await sysResponse.json()
+            const evt = sysRes.sysData?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
+            if (evt) { currentEvent = evt; setEvent(evt); }
+          }
+        } catch (err) { console.error(err) }
+      }
+
+      const requests = [
+        { key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) },
+        { key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) }
+      ]
+
+      // Fetch startList and startListTeam (sysData removed)
+      const batchResponse = await fetch("/api/batchFetch", {
+        method: "POST",
         headers: {
-          "Cache-Control": "no-cache",
-          Pragma: "no-cache",
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({
+          sportCode: params.sportCode,
+          requests: requests
+        }),
       })
 
-      if (!eventResponse.ok) {
-        throw new Error(`HTTP error! status: ${eventResponse.status} when fetching event details`)
+      if (!batchResponse.ok) {
+        throw new Error(`Batch fetch failed: ${batchResponse.status}`)
       }
 
-      const eventData = await eventResponse.json()
-      const currentEvent = eventData.sysData[4].find((e: Event) => e.eventCode === params.name)
+      const batchData = await batchResponse.json()
 
       if (!currentEvent) {
-        throw new Error("Event not found")
+        if (!isPolling) setLoading(false)
+        return
       }
-
-      setEvent(currentEvent)
 
       const isTeamEvent = currentEvent.typeCode === "T"
-      const directory = isTeamEvent ? "startListTeam" : "startList"
 
-      const checkInResponse = await fetch(
-        buildApiUrl(
-          "/api/getSysData",
-          {
-            eventCode: encodeURIComponent(params.name),
-            directory: directory,
-          },
-          params.sportCode,
-        ),
-        {
-          cache: "no-store",
-          headers: {
-            "Cache-Control": "no-cache",
-            Pragma: "no-cache",
-          },
-        },
-      )
-
-      if (!checkInResponse.ok) {
-        throw new Error(`HTTP error! status: ${checkInResponse.status}`)
+      let data;
+      if (isTeamEvent) {
+        data = batchData.startListTeam;
+      } else {
+        data = batchData.startList;
       }
 
-      const data = await checkInResponse.json()
+      if (!data || data.error) {
+        throw new Error(`Failed to fetch check-in data: ${data?.status || 'Unknown error'}`)
+      }
 
       let checkInRecords: CheckInRecord[] = []
 
@@ -134,13 +147,16 @@ export default function CheckInPage({ params }: CheckInPageProps) {
         })
       }
     } finally {
-      setLoading(false)
+      if (!isPolling) setLoading(false)
     }
   }
 
   useEffect(() => {
     if (params?.sportCode && params?.name) {
       fetchData()
+
+      const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
+      return () => clearInterval(intervalId)
     }
   }, [params])
 
@@ -161,7 +177,7 @@ export default function CheckInPage({ params }: CheckInPageProps) {
         <div className={`text-lg ${error.type === "no_data" ? "text-gray-600" : "text-red-500"} mb-4`}>
           {error.message}
         </div>
-        {error.type === "other" && <Button onClick={fetchData}>重试</Button>}
+        {error.type === "other" && <Button onClick={() => fetchData()}>重试</Button>}
       </div>
     )
   }

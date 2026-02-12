@@ -12,30 +12,32 @@ export default function Banner({ sportCode }: BannerProps) {
   const [timestamp, setTimestamp] = useState(Date.now())
 
   useEffect(() => {
-    // 设置 5 秒轮询，与数据页面的刷新频率保持一致
+    if (!sportCode) return
+
     const intervalId = setInterval(() => {
+      // 这里的更新是"静默"的，因为 Image 组件在 src 改变时会自动处理
+      // 实际上对于 Image 组件，改变 src 可能会导致短暂闪烁
+      // 但由于 Next.js Image 的优化，如果新旧图片相同，通常感知不强
+      // 或者我们可以依赖 Next.js 的缓存机制，这里主要为了触发重新请求
       setTimestamp(Date.now())
     }, 5000)
 
     return () => clearInterval(intervalId)
-  }, [])
+  }, [sportCode])
 
-  // 添加时间戳参数以绕过浏览器缓存，强制请求新的图片
-  // 后端 API (revalidate: 3) 会处理实际的缓存逻辑，确保 OSS 压力可控
   const bannerUrl = sportCode
-    ? `${buildApiUrl("/api/getBanner", {}, sportCode)}&t=${timestamp}`
+    ? buildApiUrl("/api/getBanner", { timestamp: timestamp.toString() }, sportCode)
     : "/placeholder.svg"
 
   return (
     <div className="relative w-full aspect-[2/1] bg-blue-600">
       <Image
-        key={timestamp} // 使用 key 强制 React 重新渲染 Image 组件
         src={bannerUrl}
         alt="赛事横幅"
         fill
         className="object-cover"
         priority
-        unoptimized // 既然是动态变化的 banner，建议关闭 Next.js 自身的图片优化，直接显示 API 返回的流
+        unoptimized // 保持 unoptimized 以确保直接使用 API URL
       />
     </div>
   )

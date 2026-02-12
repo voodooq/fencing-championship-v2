@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
 import { buildApiUrl } from "@/lib/sport-config"
+import { DATA_POLLING_INTERVAL } from "@/config/site"
 
 interface Athlete {
   eventId: number
@@ -57,7 +58,15 @@ interface ParticipantsPageProps {
   params: { sportCode: string; name: string }
 }
 
-export default function ParticipantsPage({ params }: ParticipantsPageProps) {
+interface ParticipantsPageProps {
+  params: {
+    sportCode: string
+    name: string
+  }
+  event?: Event
+}
+
+export default function ParticipantsPage({ params, event: eventProp }: ParticipantsPageProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [userType, setUserType] = useState<"participant" | "referee">("participant")
   const [athletes, setAthletes] = useState<Athlete[]>([])
@@ -66,55 +75,120 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
   const [referees, setReferees] = useState<Referee[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
-  const [event, setEvent] = useState<Event | null>(null)
+  const [event, setEvent] = useState<Event | null>(eventProp || null)
 
-  const fetchEventAndParticipants = useCallback(async () => {
+  useEffect(() => {
+    if (eventProp) setEvent(eventProp)
+  }, [eventProp])
+
+  const fetchEventAndParticipants = useCallback(async (isPolling = false) => {
     if (!params?.sportCode || !params?.name) return
 
     try {
-      setLoading(true)
+      if (!isPolling) setLoading(true)
 
-      // Fetch event details
-      const eventResponse = await fetch(buildApiUrl("/api/getAllData", { timestamp: Date.now().toString() }, params.sportCode))
-      if (!eventResponse.ok) {
-        throw new Error(`HTTP error! status: ${eventResponse.status} when fetching event details`)
-      }
-      const eventData = await eventResponse.json()
-      const currentEvent = eventData.sysData[4].find((e: Event) => e.eventCode === params.name)
+      let currentEvent = eventProp || event
       if (!currentEvent) {
-        throw new Error("Event not found")
+        try {
+          const sysResponse = await fetch("/api/batchFetch", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sportCode: params.sportCode, requests: [{ key: "sysData", type: "sysData" }] })
+          })
+          if (sysResponse.ok) {
+            const sysRes = await sysResponse.json()
+            const evt = sysRes.sysData?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
+            if (evt) { currentEvent = evt; setEvent(evt); }
+          }
+        } catch (err) { console.error(err) }
       }
-      setEvent(currentEvent)
 
-      // Determine directory based on typeCode
-      const directory = currentEvent.typeCode === "T" ? "startListTeam" : "startList"
+      const requests = [
+        { key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) },
+        { key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) }
+      ]
 
-      // Fetch participants
-      const participantsResponse = await fetch(
-        buildApiUrl(
-          "/api/getSysData",
-          {
-            eventCode: encodeURIComponent(params.name),
-            directory: directory,
-            timestamp: Date.now().toString(),
-          },
-          params.sportCode,
-        ),
-      )
-      if (!participantsResponse.ok) {
-        throw new Error(`HTTP error! status: ${participantsResponse.status} when fetching participants`)
+      // Fetch startList and startListTeam in one batch (removed sysData)
+      const batchResponse = await fetch("/api/batchFetch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sportCode: params.sportCode,
+          requests: requests,
+        }),
+      })
+
+      if (!batchResponse.ok) {
+        throw new Error(`Batch fetch failed: ${batchResponse.status}`)
       }
-      const participantsData = await participantsResponse.json()
+
+      const batchData = await batchResponse.json()
+
+
+      if (!currentEvent) {
+        if (!isPolling) setLoading(false)
+        return
+      }
+
+      // Determine correct list based on typeCode
+      let participantsData;
+      if (currentEvent.typeCode === "T") {
+        participantsData = batchData.startListTeam;
+      } else {
+        participantsData = batchData.startList;
+      }
+
+      // Check if the relevant data exists
+      if (!participantsData || participantsData.error) {
+        // If the specific list we need failed, that's an error.
+        throw new Error(`Failed to fetch participants data: ${participantsData?.status || 'Unknown error'}`)
+      }
 
       if (Array.isArray(participantsData) && participantsData.length >= 1) {
-        if (currentEvent.typeCode === "T") {
-          setTeams(participantsData[0])
-          setTeamMembers(participantsData[1])
-          setReferees(participantsData[2])
-        } else {
-          setAthletes(participantsData[0])
-          setReferees(participantsData[1])
+        // Reset all states first
+        setAthletes([])
+        setTeams([])
+        setTeamMembers([])
+        setReferees([])
+
+        // Helper function to identify data types
+        const identifyAndSetData = (dataList: any[]) => {
+          dataList.forEach((arr: any[]) => {
+            if (!Array.isArray(arr) || arr.length === 0) return
+
+            const firstItem = arr[0]
+
+            // Check for Referees
+            if ('RegisterInfo' in firstItem && 'RowNum' in firstItem) {
+              setReferees(arr)
+              return
+            }
+
+            // Check for Teams (must have teamName/teamCode and NOT be a team member list which usually has athName)
+            // Note: Team members might also have teamCode, so we need to valid distinct characteristics
+            if ('teamName' in firstItem && 'teamOrder' in firstItem && !('athName' in firstItem)) {
+              setTeams(arr)
+              return
+            }
+
+            // Check for Team Members (has athName and teamCode)
+            if ('teamCode' in firstItem && 'athName' in firstItem) {
+              setTeamMembers(arr)
+              return
+            }
+
+            // Check for Individual Athletes (has athName/athCode but NOT teamCode usually, or is the main athlete list)
+            // For individual events, this is the main list.
+            if ('athName' in firstItem && 'athOrder' in firstItem && !('teamCode' in firstItem)) {
+              setAthletes(arr)
+              return
+            }
+          })
         }
+
+        identifyAndSetData(participantsData)
+
       } else {
         throw new Error("数据格式不正确")
       }
@@ -129,7 +203,7 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
         })
       }
     } finally {
-      setLoading(false)
+      if (!isPolling) setLoading(false)
     }
   }, [params])
 
@@ -138,8 +212,8 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
       fetchEventAndParticipants()
 
       const intervalId = setInterval(() => {
-        fetchEventAndParticipants()
-      }, 5000)
+        fetchEventAndParticipants(true)
+      }, DATA_POLLING_INTERVAL)
 
       return () => clearInterval(intervalId)
     }

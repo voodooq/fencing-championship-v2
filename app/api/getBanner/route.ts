@@ -3,6 +3,8 @@ import { type NextRequest, NextResponse } from "next/server"
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
 
+import { DATA_REFRESH_INTERVAL } from "@/config/site"
+
 export async function GET(request: NextRequest) {
   const url = new URL(request.url)
   const sportCode = url.searchParams.get("sportCode")
@@ -17,11 +19,11 @@ export async function GET(request: NextRequest) {
   try {
     // 3. 向源服务器 (OSS) 发起请求
     // 使用 Next.js 的 ISR (Incremental Static Regeneration) 机制
-    // revalidate: 3 表示 Next.js 会缓存响应 3 秒
+    // revalidate: 使用配置的间隔
     // 这期间无论有多少个请求，Next.js 都只会向 OSS 发起一次请求 (请求合并)
     const response = await fetch(imageUrl, {
       method: "GET",
-      next: { revalidate: 3 },
+      next: { revalidate: DATA_REFRESH_INTERVAL },
     })
 
     // 4. 处理来自源服务器的响应
@@ -66,11 +68,11 @@ export async function GET(request: NextRequest) {
       headers.set("Content-Type", contentType)
     }
 
-    // 关键：设置浏览器缓存策略与服务器同步 (3秒)
+    // 关键：设置浏览器缓存策略与服务器同步
     // public: 允许浏览器和 CDN 缓存
-    // max-age=3: 浏览器缓存 3 秒
+    // max-age: 浏览器缓存时间 (与配置一致)
     // stale-while-revalidate=5: 允许短暂使用过期数据，提升体验
-    headers.set("Cache-Control", "public, max-age=3, stale-while-revalidate=5")
+    headers.set("Cache-Control", `public, max-age=${DATA_REFRESH_INTERVAL}, stale-while-revalidate=5`)
 
     // 6. 将图片数据流式传输给浏览器
     return new NextResponse(response.body, {

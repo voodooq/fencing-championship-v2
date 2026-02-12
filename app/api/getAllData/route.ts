@@ -3,6 +3,8 @@ import { NextResponse, type NextRequest } from "next/server"
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
 
+import { DATA_REFRESH_INTERVAL } from "@/config/site"
+
 const dataFiles = [{ name: "sysData", url: "sysData.txt" }]
 
 export async function GET(request: NextRequest) {
@@ -26,7 +28,7 @@ export async function GET(request: NextRequest) {
 
       try {
         const response = await fetch(fileUrl, {
-          next: { revalidate: 3 }, // Revalidate every 3 seconds
+          next: { revalidate: DATA_REFRESH_INTERVAL }, // Revalidate every 15 seconds
         })
 
         if (!response.ok) {
