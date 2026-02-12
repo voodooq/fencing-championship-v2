@@ -80,7 +80,7 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
       setError(null)
 
       const response = await fetch(
-        buildApiUrl("/api/getAllData", { timestamp: Date.now().toString() }, params.sportCode),
+        buildApiUrl("/api/getAllData", {}, params.sportCode),
       )
 
       if (!response.ok) {
@@ -162,13 +162,66 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
 
   const filteredEvents = useMemo(() => {
     if (!allData) return []
-    return allData.sysData[4].filter(
-      (event) =>
+
+    const normalize = (v: any) => String(v ?? "").trim().toUpperCase()
+
+    // Dev-only: dump seen genderCode values to help diagnose inconsistent data
+    if (process.env.NODE_ENV !== "production") {
+      const seen = Array.from(new Set(allData.sysData[4].map((e) => String(e.genderCode ?? "").trim())))
+      console.debug("DEBUG: seen genderCode values:", seen)
+    }
+
+    const mapGender = (v: any) => {
+      const n = normalize(v)
+      if (!n) return ""
+      // Map known aliases to canonical codes
+      if (n === "F") return "W" // some data uses 'F' for female
+      if (n === "W") return "W"
+      if (n === "M") return "M"
+      // handle Chinese values just in case
+      if (String(v).includes("女子") || String(v).includes("女")) return "W"
+      if (String(v).includes("男子") || String(v).includes("男")) return "M"
+      return n
+    }
+
+    const results = allData.sysData[4].filter((event) => {
+      const genderCode = mapGender(event.genderCode)
+
+      // Fallback: try infer gender from event name when genderCode is missing or empty
+      const name = String(event.eventName || "")
+      const fallbackGenderFromName = (() => {
+        if (name.includes("女子") || name.includes("女")) return "W"
+        if (name.includes("男子") || name.includes("男")) return "M"
+        return ""
+      })()
+
+      const eventGenderMapped = genderCode || mapGender(fallbackGenderFromName)
+      const selectedGenderMapped = mapGender(selectedGender)
+
+      return (
         (selectedDate === "all" || event.formattedDate === selectedDate) &&
         (selectedType === "all" || event.typeCode === selectedType) &&
-        (selectedGender === "all" || event.genderCode === selectedGender) &&
-        (selectedWeapon === "all" || event.weaponCode === selectedWeapon),
-    )
+        (selectedGender === "all" || eventGenderMapped === selectedGenderMapped) &&
+        (selectedWeapon === "all" || event.weaponCode === selectedWeapon)
+      )
+    })
+
+    // Dev-only: if user filtered by gender and got no results, dump some samples to help debugging
+    if (process.env.NODE_ENV !== "production" && selectedGender !== "all" && results.length === 0) {
+      const selectedNormalized = normalize(selectedGender)
+      const selectedMapped = mapGender(selectedGender)
+      const samples = allData.sysData[4].slice(0, 20).map((e) => ({
+        eventId: e.eventId,
+        name: e.eventName,
+        originalGenderCode: e.genderCode,
+        inferred: (String(e.eventName || "").includes("女子") || String(e.eventName || "").includes("女")) ? "W" : (String(e.eventName || "").includes("男子") || String(e.eventName || "").includes("男")) ? "M" : "",
+        normalizedGenderCode: normalize(e.genderCode),
+        mappedGenderCode: mapGender(e.genderCode),
+      }))
+      console.debug("DEBUG: gender filter produced 0 results", { selectedGender, selectedNormalized, selectedMapped, samples })
+    }
+
+    return results
   }, [allData, selectedDate, selectedType, selectedGender, selectedWeapon])
 
   if (!params?.sportCode || loading) {

@@ -133,13 +133,9 @@ export default function EventLayout({
       //console.log("Fetching data for sportCode:", params.sportCode)
 
       const response = await fetch(
-        buildApiUrl("/api/getAllData", { timestamp: Date.now().toString() }, params.sportCode),
+        buildApiUrl("/api/getAllData", {}, params.sportCode),
         {
-          cache: "no-store",
-          headers: {
-            "Cache-Control": "no-cache",
-            Pragma: "no-cache",
-          },
+          next: { revalidate: DATA_POLLING_INTERVAL / 1000 }, // Ensure it uses the app's refresh logic
         },
       )
 

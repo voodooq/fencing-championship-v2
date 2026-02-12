@@ -25,22 +25,19 @@ interface Event {
   typeCode: string
 }
 
-export default function RoundsPage({ params, event: eventProp }: { params: { sportCode: string; name: string }, event?: Event }) {
+export default function RoundsPage({ params }: { params: { sportCode: string; name: string } }) {
   const [eventFormat, setEventFormat] = useState<EventFormat | null>(null)
-  const [event, setEvent] = useState<Event | null>(eventProp || null)
+  const [event, setEvent] = useState<Event | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
 
-  // Update local event state if prop changes
-  useEffect(() => {
-    if (eventProp) setEvent(eventProp)
-  }, [eventProp])
+  // Note: this page no longer accepts an external `event` prop. The page will resolve `event` by fetching
+  // `sysData` inside `fetchEventData()` if needed, which avoids build-time type validation errors.
 
   const fetchEventData = useCallback(async (isPolling = false) => {
     if (!params?.sportCode || !params?.name) return
-    // If we have event data from props/state, we don't need to fetch sysData unless we really want IT specifically.
-    // Layout provides reliable event data.
-    let currentEvent = eventProp || event
+    // If we have event data from state, use it; otherwise we'll fetch from sysData.
+    let currentEvent = event
 
     // Fallback: If no event prop, fetch sysData
     if (!currentEvent) {
@@ -196,7 +193,7 @@ export default function RoundsPage({ params, event: eventProp }: { params: { spo
     } finally {
       if (!isPolling) setLoading(false)
     }
-  }, [params, eventProp, event])
+  }, [params, event])
 
   useEffect(() => {
     if (params?.sportCode && params?.name) {

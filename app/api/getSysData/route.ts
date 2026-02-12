@@ -1,5 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
 
+// This API uses request URL and remote resources; mark as dynamic
+export const dynamic = 'force-dynamic'
+
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
 

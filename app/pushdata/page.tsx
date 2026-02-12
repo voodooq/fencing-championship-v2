@@ -284,7 +284,7 @@ export default function CompetitionManagement() {
         setCompetitionInfo({
           name: result.SportName || "获取成功",
           code: result.SportCode || competitionCode,
-          publishUrl: result.InfoUrl || `http://fencing.yy-sport.com.cn:3021/${competitionCode}`,
+          publishUrl: result.InfoUrl || `http://resultfe.yy-sport.com.cn:3021/${competitionCode}`,
           sportId: result.Id?.toString() || "", // Id 字段转为字符串
           status: result.Status?.toString() || "", // 状态信息
         })

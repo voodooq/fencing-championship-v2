@@ -13,6 +13,8 @@ import LoadingOverlay from "@/components/loading"
 import { buildApiUrl } from "@/lib/sport-config"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 
+import { usePolling } from "@/hooks/use-polling"
+
 interface Match {
   phaseId: number
   matchOrder: number
@@ -60,7 +62,7 @@ const getColor = (phaseOrder: number, totalPhases: number, matchIndex: number, t
   return colors[colorIndex]
 }
 
-const PlayerCard: FC<{
+const PlayerCard = React.memo<{
   name: string | null
   organization: string | null
   color: string
@@ -71,7 +73,7 @@ const PlayerCard: FC<{
   isPlacementMatch?: boolean
   showPlacementLabel?: boolean
   showScore?: boolean
-}> = ({
+}>(({
   name,
   organization,
   color,
@@ -83,34 +85,36 @@ const PlayerCard: FC<{
   showPlacementLabel = true,
   showScore = true,
 }) => (
-    <div
-      className={`rounded-lg overflow-hidden text-white relative ${isWinner ? "border-4 border-yellow-400 shadow-lg shadow-yellow-300/50" : ""
-        } ${isPlacementMatch && showPlacementLabel ? "border-l-4 border-l-purple-500" : ""}`}
-      style={{
-        backgroundColor: color ? (isWinner ? (color.startsWith("#") ? color : `#${color}`) : color) : "#4B9EF9",
-        filter: isWinner ? "brightness(1.2)" : "none",
-      }}
-    >
-      <div className="flex items-center">
-        <div className="w-10 py-2 text-center font-bold border-r border-white/20">
-          {initialRanking !== undefined && initialRanking !== null ? initialRanking : "-"}
-        </div>
-        <div className={`flex-1 flex flex-col justify-center px-3 py-2 ${!showScore ? "pr-3" : ""}`}>
-          <span className={`text-nowrap ${isWinner ? "font-semibold" : "font-semibold"}`}>
-            {!regId ? "待定" : regId > 0 ? name || "" : "轮空"}
-          </span>
-          <span className="text-sm font-light">{regId && regId > 0 ? organization || "" : "-"}</span>
-        </div>
-        {showScore && (
-          <div className="w-10 py-2 text-center font-bold border-l border-white/20">
-            {score !== undefined && score !== null ? score : "-"}
-          </div>
-        )}
+  <div
+    className={`rounded-lg overflow-hidden text-white relative ${isWinner ? "border-4 border-yellow-400 shadow-lg shadow-yellow-300/50" : ""
+      } ${isPlacementMatch && showPlacementLabel ? "border-l-4 border-l-purple-500" : ""}`}
+    style={{
+      backgroundColor: color ? (isWinner ? (color.startsWith("#") ? color : `#${color}`) : color) : "#4B9EF9",
+      filter: isWinner ? "brightness(1.2)" : "none",
+    }}
+  >
+    <div className="flex items-center">
+      <div className="w-10 py-2 text-center font-bold border-r border-white/20">
+        {initialRanking !== undefined && initialRanking !== null ? initialRanking : "-"}
       </div>
+      <div className={`flex-1 flex flex-col justify-center px-3 py-2 ${!showScore ? "pr-3" : ""}`}>
+        <span className={`text-nowrap ${isWinner ? "font-semibold" : "font-semibold"}`}>
+          {!regId ? "待定" : regId > 0 ? name || "" : "轮空"}
+        </span>
+        <span className="text-sm font-light">{regId && regId > 0 ? organization || "" : "-"}</span>
+      </div>
+      {showScore && (
+        <div className="w-10 py-2 text-center font-bold border-l border-white/20">
+          {score !== undefined && score !== null ? score : "-"}
+        </div>
+      )}
     </div>
-  )
+  </div>
+))
 
-const NextPlayerCard: FC<{
+PlayerCard.displayName = "PlayerCard"
+
+const NextPlayerCard = React.memo<{
   name: string | null
   organization: string | null
   result: string | null
@@ -121,7 +125,7 @@ const NextPlayerCard: FC<{
   isThirdPlace?: boolean
   showPlacementLabel?: boolean
   isPlacementWinner?: boolean
-}> = ({
+}>(({
   name,
   organization,
   result,
@@ -133,39 +137,41 @@ const NextPlayerCard: FC<{
   showPlacementLabel = true,
   isPlacementWinner = false,
 }) => (
-    <div
-      className={`rounded-lg overflow-hidden text-white relative ${isPlacementMatch && showPlacementLabel ? "border-l-4 border-l-purple-500" : ""
-        }`}
-      style={{
-        backgroundColor: color ? (color.startsWith("#") ? color : `#${color}`) : "#4B9EF9",
-      }}
-    >
-      <div className="flex items-center">
-        <div className="flex-1 flex items-center justify-between px-2 py-2">
-          <div className="flex items-center">
-            <span className={`text-nowrap ${isWinner || isPlacementWinner ? "font-semibold" : "font-semibold"}`}>
-              {name || "待定"}
-              <span className="text-sm font-light text-right"> {organization || ""}</span>
-            </span>
-          </div>
+  <div
+    className={`rounded-lg overflow-hidden text-white relative ${isPlacementMatch && showPlacementLabel ? "border-l-4 border-l-purple-500" : ""
+      }`}
+    style={{
+      backgroundColor: color ? (color.startsWith("#") ? color : `#${color}`) : "#4B9EF9",
+    }}
+  >
+    <div className="flex items-center">
+      <div className="flex-1 flex items-center justify-between px-2 py-2">
+        <div className="flex items-center">
+          <span className={`text-nowrap ${isWinner || isPlacementWinner ? "font-semibold" : "font-semibold"}`}>
+            {name || "待定"}
+            <span className="text-sm font-light text-right"> {organization || ""}</span>
+          </span>
         </div>
       </div>
-      {result && (
-        <div
-          className={`bg-black/30 py-1 px-3 text-center ${isChampion ? "text-yellow-300" : isThirdPlace ? "text-white" : "text-white"
-            } font-bold`}
-        >
-          {result}
-        </div>
-      )}
     </div>
-  )
+    {result && (
+      <div
+        className={`bg-black/30 py-1 px-3 text-center ${isChampion ? "text-yellow-300" : isThirdPlace ? "text-white" : "text-white"
+          } font-bold`}
+      >
+        {result}
+      </div>
+    )}
+  </div>
+))
 
-const ChampionCard: FC<{
+NextPlayerCard.displayName = "NextPlayerCard"
+
+const ChampionCard = React.memo<{
   name: string | null
   organization: string | null
   result: string | null
-}> = ({ name, organization, result }) => {
+}>(({ name, organization, result }) => {
   if (!name) return null
 
   return (
@@ -196,7 +202,9 @@ const ChampionCard: FC<{
       </div>
     </div>
   )
-}
+})
+
+ChampionCard.displayName = "ChampionCard"
 
 const BracketModal: FC<{
   isOpen: boolean
@@ -367,41 +375,43 @@ const BracketModal: FC<{
     }
   }, [isOpen, scale, position, isDragging, startPos, lastPos, dragDistance])
 
-  const handleCardClick = (phaseId: number, matchIndex: number, match: Match) => {
+  const handleCardClick = useCallback((phaseId: number, matchIndex: number, match: Match) => {
     if (dragDistance < 10) {
       onPlayerClick(phaseId, matchIndex, match)
     }
-  }
+  }, [dragDistance, onPlayerClick])
 
   if (!isOpen) return null
 
   // Calculate positions for all matches in all phases
-  const matchPositions: Record<number, number[]> = {}
-  const cardWidth = 300
-  const horizontalSpacing = 50
-  const verticalSpacing = 220
-  const headerOffset = 60
+  const { matchPositions, phaseHorizontalPositions } = useMemo(() => {
+    const cardWidth = 300
+    const horizontalSpacing = 50
+    const verticalSpacing = 220
+    const headerOffset = 60
+    const matchPositions: Record<number, number[]> = {}
+    const phaseHorizontalPositions: number[] = []
 
-  // Calculate horizontal positions for each phase
-  const phaseHorizontalPositions: number[] = []
-  const finalPhaseIndex = bracketData.findIndex((phase) => phase.phaseType === 3 && phase.nextPhaseId === 0)
-  let finalPhaseCenterY = 0
+    if (bracketData.length === 0) return { matchPositions, phaseHorizontalPositions }
 
-  bracketData.forEach((phase, index) => {
-    if (index === 0) {
-      phaseHorizontalPositions[index] = 0
-    } else {
-      const isPlacementPhase = phase.phaseType === 4
-      const prevPhaseIsFinal =
-        index > 0 && bracketData[index - 1].phaseType === 3 && bracketData[index - 1].nextPhaseId === 0
-      const extraLeftMargin = isPlacementPhase && prevPhaseIsFinal ? placementMatchSpacing : 0
-      phaseHorizontalPositions[index] =
-        phaseHorizontalPositions[index - 1] + cardWidth + horizontalSpacing + extraLeftMargin
-    }
-  })
+    // Calculate horizontal positions
+    const finalPhaseIndex = bracketData.findIndex((phase) => phase.phaseType === 3 && phase.nextPhaseId === 0)
+    let finalPhaseCenterY = 0
 
-  // Calculate match positions
-  if (bracketData.length > 0) {
+    bracketData.forEach((phase, index) => {
+      if (index === 0) {
+        phaseHorizontalPositions[index] = 0
+      } else {
+        const isPlacementPhase = phase.phaseType === 4
+        const prevPhaseIsFinal =
+          index > 0 && bracketData[index - 1].phaseType === 3 && bracketData[index - 1].nextPhaseId === 0
+        const extraLeftMargin = isPlacementPhase && prevPhaseIsFinal ? placementMatchSpacing : 0
+        phaseHorizontalPositions[index] =
+          phaseHorizontalPositions[index - 1] + cardWidth + horizontalSpacing + extraLeftMargin
+      }
+    })
+
+    // Calculate match positions
     const firstPhase = bracketData[0]
     matchPositions[firstPhase.phaseId] = firstPhase.matches.map((_, index) => index * verticalSpacing + headerOffset)
 
@@ -412,14 +422,7 @@ const BracketModal: FC<{
 
       if (currentPhase.phaseType === 4 && finalPhaseIndex !== -1) {
         if (finalPhaseCenterY === 0 && bracketData[finalPhaseIndex].matches.length > 0) {
-          const finalPhaseMatches = bracketData[finalPhaseIndex].matches
-          const firstMatchPos = matchPositions[bracketData[finalPhaseIndex].phaseId][0] + 120
-
-          if (finalPhaseMatches.length === 1) {
-            finalPhaseCenterY = firstMatchPos
-          } else {
-            finalPhaseCenterY = firstMatchPos
-          }
+          finalPhaseCenterY = matchPositions[bracketData[finalPhaseIndex].phaseId][0] + 120
         }
 
         for (let j = 0; j < currentPhase.matches.length; j++) {
@@ -457,7 +460,9 @@ const BracketModal: FC<{
         matchPositions[phase.phaseId][0] += 110
       }
     })
-  }
+
+    return { matchPositions, phaseHorizontalPositions }
+  }, [bracketData])
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -580,10 +585,10 @@ const BracketModal: FC<{
                         marginLeft:
                           phaseIndex > 0
                             ? phase.phaseName.indexOf("5-6名决赛") > -1
-                              ? `${horizontalSpacing + extraLeftMargin - 350}px`
-                              : `${horizontalSpacing + extraLeftMargin}px`
+                              ? `${HORIZONTAL_SPACING + extraLeftMargin - 350}px`
+                              : `${HORIZONTAL_SPACING + extraLeftMargin}px`
                             : "0",
-                        width: `${cardWidth}px`,
+                        width: `${CARD_WIDTH}px`,
                       }}
                       data-phase-id={phase.phaseId}
                     >
@@ -821,60 +826,88 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
 
   const matchRefs = useRef<(HTMLDivElement | null)[]>([])
 
-  const fetchBracketData = useCallback(async (isPolling = false) => {
-    if (!params?.sportCode || !params?.name) return
+  const fetchFn = useCallback(async (isPolling: boolean) => {
+    if (!params?.sportCode || !params?.name) return []
 
-    try {
-      if (!isPolling) setLoading(true)
-      setError(null)
-      console.log("Fetching bracket data...")
-      const response = await fetch(
-        buildApiUrl(
-          "/api/getBracketData",
-          {
-            eventCode: params.name,
-            timestamp: Date.now().toString(),
-          },
-          params.sportCode,
-        ),
-        {
-          cache: "no-store",
-          headers: {
-            "Cache-Control": "no-cache",
-            Pragma: "no-cache",
-          },
-        },
-      )
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      const data = await response.json()
-      // console.log("Bracket data received:", data)
-      if (!Array.isArray(data)) {
-        throw new Error("Invalid data format received")
-      }
+    // 1. Fetch phases
+    const response = await fetch("/api/batchFetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sportCode: params.sportCode,
+        requests: [{ key: "phases", directory: "dualPhase", eventCode: params.name }],
+      }),
+    })
 
-      setBracketData(data)
-      if (!isPolling) {
-        setCurrentPhaseId(data[0]?.phaseId || 0)
-      }
-    } catch (error) {
-      console.error("Error fetching bracket data:", error)
-      setError({ type: "other", message: "暂无对阵数据" })
-    } finally {
-      if (!isPolling) setLoading(false)
-    }
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    const batchRes = await response.json()
+    const phases = batchRes.phases
+    if (!Array.isArray(phases)) throw new Error("Invalid phase data format received")
+
+    const sortedPhases = phases.sort((a: any, b: any) => a.phaseOrder - b.phaseOrder)
+
+    // 2. Fetch matches for all phases
+    const matchRequests = sortedPhases.map((phase: any) => ({
+      key: `matches_${phase.phaseId}`,
+      directory: "dualPhaseMatch",
+      phaseId: phase.phaseId,
+    }))
+
+    const matchResponse = await fetch("/api/batchFetch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sportCode: params.sportCode,
+        requests: matchRequests,
+      }),
+    })
+
+    if (!matchResponse.ok) throw new Error(`HTTP error fetching matches! status: ${matchResponse.status}`)
+    const matchBatchRes = await matchResponse.json()
+
+    return sortedPhases.map((phase: any) => ({
+      ...phase,
+      matches: matchBatchRes[`matches_${phase.phaseId}`] || [],
+    }))
   }, [params])
 
-  useEffect(() => {
-    if (params?.sportCode && params?.name) {
-      fetchBracketData().catch((error) => {
-        console.error("Unhandled error in fetchBracketData:", error)
-        setLoading(false)
-      })
+  const { data: fetchedBracketData, loading: pollingLoading, error: pollError, refresh } = usePolling<BracketData[]>({
+    fetchFn,
+    enabled: !!params?.sportCode && !!params?.name
+  })
 
+  // Sync polling result to state
+  useEffect(() => {
+    setLoading(pollingLoading); // Sync loading state
+    if (fetchedBracketData) {
+      setBracketData(fetchedBracketData)
+      // Only set initial phase if not already set
+      if (currentPhaseId === 0 && fetchedBracketData[0]) {
+        setCurrentPhaseId(fetchedBracketData[0].phaseId)
+      }
     }
-  }, [fetchBracketData, params])
+  }, [fetchedBracketData, currentPhaseId, pollingLoading])
+
+  // Map pollError
+  useEffect(() => {
+    if (pollError) {
+      setError({ type: "other", message: "暂无对阵数据" })
+    } else {
+      setError(null)
+    }
+  }, [pollError])
+
+  // Removed the old useEffect that called fetchBracketData on mount
+  // useEffect(() => {
+  //   if (params?.sportCode && params?.name) {
+  //     fetchBracketData().catch((error) => {
+  //       console.error("Unhandled error in fetchBracketData:", error)
+  //       setLoading(false)
+  //     })
+  //   }
+  // }, [fetchBracketData, params])
 
   useEffect(() => {
     if (targetMatchIndex !== null && !isModalOpen) {
@@ -950,12 +983,7 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
   }, [bracketData, currentPhaseId])
 
   const handleRefresh = () => {
-    setLoading(true)
-    setError(null)
-    fetchBracketData().catch((error) => {
-      console.error("Error refreshing data:", error)
-      setLoading(false)
-    })
+    refresh()
   }
 
   useEffect(() => {

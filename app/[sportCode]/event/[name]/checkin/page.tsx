@@ -28,16 +28,17 @@ interface CheckInPageProps {
   params: { sportCode: string; name: string }
 }
 
-export default function CheckInPage({ params, event: eventProp }: CheckInPageProps & { event?: Event }) {
+export default function CheckInPage({ params }: CheckInPageProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [checkInData, setCheckInData] = useState<CheckInRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
-  const [event, setEvent] = useState<Event | null>(eventProp || null)
+  const [event, setEvent] = useState<Event | null>(null)
 
-  useEffect(() => {
-    if (eventProp) setEvent(eventProp)
-  }, [eventProp])
+  // Note: previously this page accepted an optional `event` prop from parent; to satisfy Next.js page prop type checks
+  // and avoid build-time type errors, we no longer accept that prop directly. The page will resolve `event` by
+  // fetching sysData when needed inside `fetchData()`.
+
 
   const fetchData = async (isPolling = false) => {
     if (!params?.sportCode || !params?.name) return
@@ -46,7 +47,7 @@ export default function CheckInPage({ params, event: eventProp }: CheckInPagePro
       if (!isPolling) setLoading(true)
       setError(null)
 
-      let currentEvent = eventProp || event
+      let currentEvent = event
       if (!currentEvent) {
         try {
           const sysResponse = await fetch("/api/batchFetch", {

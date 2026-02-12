@@ -26,7 +26,12 @@ export function getCurrentSportCode(): string | null {
 // 构建 API URL，使用路径中的 sportCode
 export function buildApiUrl(endpoint: string, params: Record<string, string> = {}, sportCode?: string): string {
   const currentSportCode = sportCode || getCurrentSportCode()
-  const searchParams = new URLSearchParams(params)
+
+  // 过滤掉可能导致缓存失效的动态参数（如 timestamp）
+  const cleanParams = { ...params }
+  delete cleanParams.timestamp
+
+  const searchParams = new URLSearchParams(cleanParams)
 
   if (currentSportCode) {
     searchParams.set("sportCode", currentSportCode)

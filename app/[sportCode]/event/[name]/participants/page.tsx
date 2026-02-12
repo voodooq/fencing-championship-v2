@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { Search } from "lucide-react"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
@@ -54,170 +54,103 @@ interface Event {
   typeCode: string
 }
 
+import { usePolling } from "@/hooks/use-polling"
+
 interface ParticipantsPageProps {
   params: { sportCode: string; name: string }
 }
 
-interface ParticipantsPageProps {
-  params: {
-    sportCode: string
-    name: string
-  }
-  event?: Event
-}
-
-export default function ParticipantsPage({ params, event: eventProp }: ParticipantsPageProps) {
+export default function ParticipantsPage({ params }: ParticipantsPageProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [userType, setUserType] = useState<"participant" | "referee">("participant")
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [referees, setReferees] = useState<Referee[]>([])
-  const [loading, setLoading] = useState(true)
+  const [event, setEvent] = useState<Event | null>(null)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
-  const [event, setEvent] = useState<Event | null>(eventProp || null)
+  const fetchFn = useCallback(async (isPolling: boolean) => {
+    if (!params?.sportCode || !params?.name) return null
 
-  useEffect(() => {
-    if (eventProp) setEvent(eventProp)
-  }, [eventProp])
-
-  const fetchEventAndParticipants = useCallback(async (isPolling = false) => {
-    if (!params?.sportCode || !params?.name) return
-
-    try {
-      if (!isPolling) setLoading(true)
-
-      let currentEvent = eventProp || event
-      if (!currentEvent) {
-        try {
-          const sysResponse = await fetch("/api/batchFetch", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sportCode: params.sportCode, requests: [{ key: "sysData", type: "sysData" }] })
-          })
-          if (sysResponse.ok) {
-            const sysRes = await sysResponse.json()
-            const evt = sysRes.sysData?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
-            if (evt) { currentEvent = evt; setEvent(evt); }
-          }
-        } catch (err) { console.error(err) }
-      }
-
-      const requests = [
-        { key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) },
-        { key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) }
-      ]
-
-      // Fetch startList and startListTeam in one batch (removed sysData)
-      const batchResponse = await fetch("/api/batchFetch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          sportCode: params.sportCode,
-          requests: requests,
-        }),
+    let currentEvent = event
+    if (!currentEvent) {
+      const sysResponse = await fetch("/api/batchFetch", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sportCode: params.sportCode, requests: [{ key: "sysData", type: "sysData" }] })
       })
-
-      if (!batchResponse.ok) {
-        throw new Error(`Batch fetch failed: ${batchResponse.status}`)
+      if (sysResponse.ok) {
+        const sysRes = await sysResponse.json()
+        const evt = sysRes.sysData?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
+        if (evt) { currentEvent = evt; setEvent(evt); }
       }
+    }
 
-      const batchData = await batchResponse.json()
+    const requests = [
+      { key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) },
+      { key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) }
+    ]
 
+    const batchResponse = await fetch("/api/batchFetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sportCode: params.sportCode, requests }),
+    })
 
-      if (!currentEvent) {
-        if (!isPolling) setLoading(false)
-        return
-      }
+    if (!batchResponse.ok) throw new Error(`Batch fetch failed: ${batchResponse.status}`)
+    const batchData = await batchResponse.json()
 
-      // Determine correct list based on typeCode
-      let participantsData;
-      if (currentEvent.typeCode === "T") {
-        participantsData = batchData.startListTeam;
-      } else {
-        participantsData = batchData.startList;
-      }
+    if (!currentEvent) return null
 
-      // Check if the relevant data exists
-      if (!participantsData || participantsData.error) {
-        // If the specific list we need failed, that's an error.
-        throw new Error(`Failed to fetch participants data: ${participantsData?.status || 'Unknown error'}`)
-      }
+    const participantsData = currentEvent.typeCode === "T" ? batchData.startListTeam : batchData.startList
+    if (!participantsData || participantsData.error) {
+      throw new Error(`Failed to fetch participants data: ${participantsData?.status || 'Unknown error'}`)
+    }
 
-      if (Array.isArray(participantsData) && participantsData.length >= 1) {
-        // Reset all states first
-        setAthletes([])
-        setTeams([])
-        setTeamMembers([])
-        setReferees([])
+    return participantsData
+  }, [params, event])
 
-        // Helper function to identify data types
-        const identifyAndSetData = (dataList: any[]) => {
-          dataList.forEach((arr: any[]) => {
-            if (!Array.isArray(arr) || arr.length === 0) return
+  const { data: participantsData, loading, error: pollError, refresh } = usePolling({
+    fetchFn,
+    enabled: !!params?.sportCode && !!params?.name
+  })
 
-            const firstItem = arr[0]
+  // Update specific lists when participantsData changes
+  useEffect(() => {
+    if (Array.isArray(participantsData) && participantsData.length >= 1) {
+      setAthletes([])
+      setTeams([])
+      setTeamMembers([])
+      setReferees([])
 
-            // Check for Referees
-            if ('RegisterInfo' in firstItem && 'RowNum' in firstItem) {
-              setReferees(arr)
-              return
-            }
+      participantsData.forEach((arr: any[]) => {
+        if (!Array.isArray(arr) || arr.length === 0) return
+        const firstItem = arr[0]
 
-            // Check for Teams (must have teamName/teamCode and NOT be a team member list which usually has athName)
-            // Note: Team members might also have teamCode, so we need to valid distinct characteristics
-            if ('teamName' in firstItem && 'teamOrder' in firstItem && !('athName' in firstItem)) {
-              setTeams(arr)
-              return
-            }
-
-            // Check for Team Members (has athName and teamCode)
-            if ('teamCode' in firstItem && 'athName' in firstItem) {
-              setTeamMembers(arr)
-              return
-            }
-
-            // Check for Individual Athletes (has athName/athCode but NOT teamCode usually, or is the main athlete list)
-            // For individual events, this is the main list.
-            if ('athName' in firstItem && 'athOrder' in firstItem && !('teamCode' in firstItem)) {
-              setAthletes(arr)
-              return
-            }
-          })
+        if ('RegisterInfo' in firstItem && 'RowNum' in firstItem) {
+          setReferees(arr)
+        } else if ('teamName' in firstItem && 'teamOrder' in firstItem && !('athName' in firstItem)) {
+          setTeams(arr)
+        } else if ('teamCode' in firstItem && 'athName' in firstItem) {
+          setTeamMembers(arr)
+        } else if ('athName' in firstItem && 'athOrder' in firstItem && !('teamCode' in firstItem)) {
+          setAthletes(arr)
         }
+      })
+    }
+  }, [participantsData])
 
-        identifyAndSetData(participantsData)
-
-      } else {
-        throw new Error("数据格式不正确")
-      }
-    } catch (error) {
-      console.error("Error fetching data:", error)
-      if (error instanceof Error && error.message.includes("HTTP error! status: 500")) {
+  // Map pollError to existing error state
+  useEffect(() => {
+    if (pollError) {
+      if (pollError.message?.includes("500")) {
         setError({ type: "no_data", message: "当前没有数据" })
       } else {
-        setError({
-          type: "other",
-          message: `Failed to load data: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
-        })
+        setError({ type: "other", message: `Failed to load data: ${pollError.message}` })
       }
-    } finally {
-      if (!isPolling) setLoading(false)
+    } else {
+      setError(null)
     }
-  }, [params])
-
-  useEffect(() => {
-    if (params?.sportCode && params?.name) {
-      fetchEventAndParticipants()
-
-      const intervalId = setInterval(() => {
-        fetchEventAndParticipants(true)
-      }, DATA_POLLING_INTERVAL)
-
-      return () => clearInterval(intervalId)
-    }
-  }, [fetchEventAndParticipants, params])
+  }, [pollError])
 
   if (!params?.sportCode || !params?.name || loading) {
     return <LoadingOverlay />
@@ -229,28 +162,28 @@ export default function ParticipantsPage({ params, event: eventProp }: Participa
         <div className={`text-lg ${error.type === "no_data" ? "text-gray-600" : "text-red-500"} mb-4`}>
           {error.message}
         </div>
-        {error.type === "other" && <Button onClick={() => fetchEventAndParticipants()}>重试</Button>}
+        {error.type === "other" && <Button onClick={() => refresh()}>重试</Button>}
       </div>
     )
   }
 
-  const filteredAthletes = athletes.filter(
+  const filteredAthletes = useMemo(() => athletes.filter(
     (athlete) =>
       athlete.athName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       athlete.orgName.toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+  ), [athletes, searchQuery])
 
-  const filteredTeams = teams.filter((team) => team.teamName.toLowerCase().includes(searchQuery.toLowerCase()))
+  const filteredTeams = useMemo(() => teams.filter((team) => team.teamName.toLowerCase().includes(searchQuery.toLowerCase())), [teams, searchQuery])
 
-  const filteredTeamMembers = teamMembers.filter(
+  const filteredTeamMembers = useMemo(() => teamMembers.filter(
     (member) =>
       member.athName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       member.orgName.toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+  ), [teamMembers, searchQuery])
 
-  const filteredReferees = referees.filter((referee) =>
+  const filteredReferees = useMemo(() => referees.filter((referee) =>
     referee.RegisterInfo.toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+  ), [referees, searchQuery])
 
   return (
     <div className="space-y-4">

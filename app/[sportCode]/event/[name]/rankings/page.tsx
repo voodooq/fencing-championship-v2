@@ -37,7 +37,6 @@ export default function RankingsPage({ params }: { params: { sportCode: string; 
             {
               eventCode: encodeURIComponent(params.name),
               directory: "eventRank",
-              timestamp: Date.now().toString(),
             },
             params.sportCode,
           ),
