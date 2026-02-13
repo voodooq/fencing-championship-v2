@@ -152,21 +152,6 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
     }
   }, [pollError])
 
-  if (!params?.sportCode || !params?.name || loading) {
-    return <LoadingOverlay />
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center p-8">
-        <div className={`text-lg ${error.type === "no_data" ? "text-gray-600" : "text-red-500"} mb-4`}>
-          {error.message}
-        </div>
-        {error.type === "other" && <Button onClick={() => refresh()}>重试</Button>}
-      </div>
-    )
-  }
-
   const filteredAthletes = useMemo(() => athletes.filter(
     (athlete) =>
       athlete.athName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -184,6 +169,21 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
   const filteredReferees = useMemo(() => referees.filter((referee) =>
     referee.RegisterInfo.toLowerCase().includes(searchQuery.toLowerCase()),
   ), [referees, searchQuery])
+
+  if (!params?.sportCode || !params?.name || loading) {
+    return <LoadingOverlay />
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8">
+        <div className={`text-lg ${error.type === "no_data" ? "text-gray-600" : "text-red-500"} mb-4`}>
+          {error.message}
+        </div>
+        {error.type === "other" && <Button onClick={() => refresh()}>重试</Button>}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">

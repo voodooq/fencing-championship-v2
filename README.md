@@ -53,8 +53,8 @@
 该项目可以轻松部署到 Vercel 平台。只需将代码推送到 GitHub 仓库，然后在 Vercel 中导入该仓库即可。
 
 
-打包：docker build --no-cache -t crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v3 .
-推送：docker push crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v3
+打包：docker build --no-cache -t crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v4 .
+推送：docker push crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v4
 
-拉取：docker pull crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v3
-运行：docker run -d --name fencing-all-v3 -p 3020:3000 -e FENCING_API_BASE_URL=https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore --restart unless-stopped crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v3
+拉取：docker pull crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v4
+运行：docker run -d --name fencing-all-v4 -p 3020:3000 -e FENCING_API_BASE_URL=https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore --restart unless-stopped crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v4

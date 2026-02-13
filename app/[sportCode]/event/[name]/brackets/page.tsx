@@ -381,8 +381,6 @@ const BracketModal: FC<{
     }
   }, [dragDistance, onPlayerClick])
 
-  if (!isOpen) return null
-
   // Calculate positions for all matches in all phases
   const { matchPositions, phaseHorizontalPositions } = useMemo(() => {
     const cardWidth = 300
@@ -463,6 +461,8 @@ const BracketModal: FC<{
 
     return { matchPositions, phaseHorizontalPositions }
   }, [bracketData])
+
+  if (!isOpen) return null
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
