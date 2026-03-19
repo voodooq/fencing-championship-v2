@@ -217,14 +217,31 @@ const BracketModal: FC<{
 }> = ({ isOpen, onClose, bracketData, currentPhaseId, setCurrentPhaseId, showReferees, onPlayerClick }) => {
   const modalRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const [scale, setScale] = useState(1)
-  const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
-  const [startPos, setStartPos] = useState({ x: 0, y: 0 })
-  const [lastPos, setLastPos] = useState({ x: 0, y: 0 })
-  const [dragDistance, setDragDistance] = useState(0)
-  let initialDistance = 0
-  let initialScale = scale
+  const isDraggingRef = useRef(false)
+  const dragDistanceRef = useRef(0)
+  const suppressClickRef = useRef(false)
+  const scaleRef = useRef(1)
+  const positionRef = useRef({ x: 0, y: 0 })
+  const lastPosRef = useRef({ x: 0, y: 0 })
+  const startPosRef = useRef({ x: 0, y: 0 })
+  const pinchStateRef = useRef({
+    initialDistance: 0,
+    initialScale: 1,
+    initialPosition: { x: 0, y: 0 },
+    midpoint: { x: 0, y: 0 },
+  })
+
+  const clampScale = useCallback((value: number) => Math.max(0.3, Math.min(8, value)), [])
+
+  const applyTransform = useCallback((nextScale: number, nextPosition: { x: number; y: number }) => {
+    scaleRef.current = nextScale
+    positionRef.current = nextPosition
+
+    if (contentRef.current) {
+      contentRef.current.style.transform = `translate3d(${nextPosition.x}px, ${nextPosition.y}px, 0) scale(${nextScale})`
+    }
+  }, [])
 
   const CARD_WIDTH = 300
   const HORIZONTAL_SPACING = 50
@@ -234,89 +251,147 @@ const BracketModal: FC<{
 
   // Reset position and scale when modal opens
   useEffect(() => {
-    if (isOpen) {
-      setScale(1)
-      setPosition({ x: 0, y: 0 })
-      setLastPos({ x: 0, y: 0 })
-      setDragDistance(0)
+    if (!isOpen) return
+
+    isDraggingRef.current = false
+    setIsDragging(false)
+    dragDistanceRef.current = 0
+    suppressClickRef.current = false
+    lastPosRef.current = { x: 0, y: 0 }
+    startPosRef.current = { x: 0, y: 0 }
+    pinchStateRef.current = {
+      initialDistance: 0,
+      initialScale: 1,
+      initialPosition: { x: 0, y: 0 },
+      midpoint: { x: 0, y: 0 },
     }
-  }, [isOpen])
+
+    applyTransform(1, { x: 0, y: 0 })
+  }, [isOpen, applyTransform])
 
   // Enhanced touch and drag functionality
   useEffect(() => {
     const modal = modalRef.current
     if (!modal || !isOpen) return
 
+    const getDistance = (touches: TouchList) =>
+      Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+
+    const getMidpoint = (touches: TouchList) => {
+      const rect = modal.getBoundingClientRect()
+      return {
+        x: (touches[0].clientX + touches[1].clientX) / 2 - rect.left,
+        y: (touches[0].clientY + touches[1].clientY) / 2 - rect.top,
+      }
+    }
+
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
         e.preventDefault()
-        initialDistance = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY,
-        )
-        initialScale = scale
-        if (isDragging) {
-          setIsDragging(false)
-          setLastPos(position)
+        const midpoint = getMidpoint(e.touches)
+
+        pinchStateRef.current = {
+          initialDistance: getDistance(e.touches),
+          initialScale: scaleRef.current,
+          initialPosition: { ...positionRef.current },
+          midpoint,
         }
-      } else if (e.touches.length === 1) {
+
+        dragDistanceRef.current = 0
+        suppressClickRef.current = true
+        isDraggingRef.current = false
+        setIsDragging(false)
+        return
+      }
+
+      if (e.touches.length === 1) {
+        startPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        lastPosRef.current = { ...positionRef.current }
+        dragDistanceRef.current = 0
+        suppressClickRef.current = false
+        isDraggingRef.current = true
         setIsDragging(true)
-        setStartPos({ x: e.touches[0].clientX, y: e.touches[0].clientY })
-        setDragDistance(0)
       }
     }
 
     const handleTouchMove = (e: TouchEvent) => {
-      e.preventDefault()
-
       if (e.touches.length === 2) {
-        const currentDistance = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY,
-        )
+        e.preventDefault()
 
-        if (initialDistance > 0) {
-          const ratio = currentDistance / initialDistance
-          const sensitivity = 1.5
-          const enhancedRatio = ratio < 1 ? 1 - Math.pow(1 - ratio, sensitivity) : Math.pow(ratio, sensitivity)
-          const newScale = Math.max(0.3, Math.min(8, initialScale * enhancedRatio))
-          setScale(newScale)
+        const currentDistance = getDistance(e.touches)
+        const currentMidpoint = getMidpoint(e.touches)
+        const { initialDistance, initialScale, initialPosition, midpoint } = pinchStateRef.current
+
+        if (!initialDistance || initialScale <= 0) return
+
+        const newScale = clampScale(initialScale * (currentDistance / initialDistance))
+        const worldX = (midpoint.x - initialPosition.x) / initialScale
+        const worldY = (midpoint.y - initialPosition.y) / initialScale
+
+        applyTransform(newScale, {
+          x: currentMidpoint.x - worldX * newScale,
+          y: currentMidpoint.y - worldY * newScale,
+        })
+
+        return
+      }
+
+      if (e.touches.length === 1 && isDraggingRef.current) {
+        e.preventDefault()
+
+        const dx = e.touches[0].clientX - startPosRef.current.x
+        const dy = e.touches[0].clientY - startPosRef.current.y
+
+        dragDistanceRef.current = Math.hypot(dx, dy)
+        if (dragDistanceRef.current > 8) {
+          suppressClickRef.current = true
         }
-      } else if (e.touches.length === 1 && isDragging) {
-        const dx = e.touches[0].clientX - startPos.x
-        const dy = e.touches[0].clientY - startPos.y
 
-        const distance = Math.sqrt(dx * dx + dy * dy)
-        setDragDistance(distance)
-
-        setPosition({
-          x: lastPos.x + dx / scale,
-          y: lastPos.y + dy / scale,
+        applyTransform(scaleRef.current, {
+          x: lastPosRef.current.x + dx,
+          y: lastPosRef.current.y + dy,
         })
       }
     }
 
     const handleTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length === 0) {
-        if (isDragging) {
-          setIsDragging(false)
-          setLastPos(position)
-          setDragDistance(0)
-        }
-        initialDistance = 0
-      } else if (e.touches.length === 1) {
-        initialDistance = 0
-        setStartPos({ x: e.touches[0].clientX, y: e.touches[0].clientY })
-        setDragDistance(0)
+      if (e.touches.length === 1) {
+        startPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        lastPosRef.current = { ...positionRef.current }
+        pinchStateRef.current.initialDistance = 0
+        dragDistanceRef.current = 0
+        suppressClickRef.current = true
+        isDraggingRef.current = true
+        setIsDragging(true)
+        return
       }
+
+      pinchStateRef.current.initialDistance = 0
+      if (dragDistanceRef.current > 8 || e.changedTouches.length > 1) {
+        suppressClickRef.current = true
+      }
+      dragDistanceRef.current = 0
+      isDraggingRef.current = false
+      setIsDragging(false)
     }
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault()
-      const delta = -e.deltaY
-      const zoomIntensity = 0.15
-      const newScale = delta > 0 ? Math.min(8, scale * (1 + zoomIntensity)) : Math.max(0.3, scale * (1 - zoomIntensity))
-      setScale(newScale)
+
+      const rect = modal.getBoundingClientRect()
+      const focalPoint = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      }
+      const zoomFactor = e.deltaY < 0 ? 1.15 : 1 / 1.15
+      const newScale = clampScale(scaleRef.current * zoomFactor)
+      const worldX = (focalPoint.x - positionRef.current.x) / scaleRef.current
+      const worldY = (focalPoint.y - positionRef.current.y) / scaleRef.current
+
+      applyTransform(newScale, {
+        x: focalPoint.x - worldX * newScale,
+        y: focalPoint.y - worldY * newScale,
+      })
     }
 
     const handleMouseDown = (e: MouseEvent) => {
@@ -327,33 +402,42 @@ const BracketModal: FC<{
         return
       }
 
+      isDraggingRef.current = true
       setIsDragging(true)
-      setStartPos({ x: e.clientX, y: e.clientY })
-      setDragDistance(0)
+      startPosRef.current = { x: e.clientX, y: e.clientY }
+      lastPosRef.current = { ...positionRef.current }
+      dragDistanceRef.current = 0
+      suppressClickRef.current = false
       e.preventDefault()
     }
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return
+      if (!isDraggingRef.current) return
 
-      const dx = e.clientX - startPos.x
-      const dy = e.clientY - startPos.y
+      const dx = e.clientX - startPosRef.current.x
+      const dy = e.clientY - startPosRef.current.y
 
-      const distance = Math.sqrt(dx * dx + dy * dy)
-      setDragDistance(distance)
+      dragDistanceRef.current = Math.hypot(dx, dy)
+      if (dragDistanceRef.current > 8) {
+        suppressClickRef.current = true
+      }
 
-      setPosition({
-        x: lastPos.x + dx / scale,
-        y: lastPos.y + dy / scale,
+      applyTransform(scaleRef.current, {
+        x: lastPosRef.current.x + dx,
+        y: lastPosRef.current.y + dy,
       })
     }
 
     const handleMouseUp = () => {
-      if (isDragging) {
-        setIsDragging(false)
-        setLastPos(position)
-        setDragDistance(0)
+      if (!isDraggingRef.current) return
+
+      if (dragDistanceRef.current > 8) {
+        suppressClickRef.current = true
       }
+
+      isDraggingRef.current = false
+      setIsDragging(false)
+      dragDistanceRef.current = 0
     }
 
     modal.addEventListener("touchstart", handleTouchStart, { passive: false })
@@ -373,13 +457,19 @@ const BracketModal: FC<{
       window.removeEventListener("mousemove", handleMouseMove)
       window.removeEventListener("mouseup", handleMouseUp)
     }
-  }, [isOpen, scale, position, isDragging, startPos, lastPos, dragDistance])
+  }, [isOpen, clampScale, applyTransform])
 
   const handleCardClick = useCallback((phaseId: number, matchIndex: number, match: Match) => {
-    if (dragDistance < 10) {
-      onPlayerClick(phaseId, matchIndex, match)
+    if (suppressClickRef.current || dragDistanceRef.current > 8) {
+      suppressClickRef.current = false
+      return
     }
-  }, [dragDistance, onPlayerClick])
+
+    onClose()
+    setTimeout(() => {
+      onPlayerClick(phaseId, matchIndex, match)
+    }, 100)
+  }, [onClose, onPlayerClick])
 
   // Calculate positions for all matches in all phases
   const { matchPositions, phaseHorizontalPositions } = useMemo(() => {
@@ -487,9 +577,9 @@ const BracketModal: FC<{
         >
           <div
             ref={contentRef}
-            className="absolute inset-0 origin-top-left transition-transform duration-100"
+            className="absolute inset-0 origin-top-left"
             style={{
-              transform: `scale(${scale}) translate(${position.x}px, ${position.y}px)`,
+              willChange: "transform",
             }}
           >
             <div className="p-4 min-w-max">
@@ -636,10 +726,7 @@ const BracketModal: FC<{
                                   className="absolute inset-0 w-full h-full bg-transparent hover:bg-white/30 active:bg-white/50 transition-colors duration-150 cursor-pointer pointer-events-auto z-50 hover:border-4 hover:border-white"
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    onClose()
-                                    setTimeout(() => {
-                                      onPlayerClick(phase.phaseId, matchIndex, match)
-                                    }, 100)
+                                    handleCardClick(phase.phaseId, matchIndex, match)
                                   }}
                                   style={{ cursor: "pointer !important" }}
                                 >
@@ -677,10 +764,7 @@ const BracketModal: FC<{
                                   className="absolute inset-0 w-full h-full bg-transparent hover:bg-white/30 active:bg-white/50 transition-colors duration-150 cursor-pointer pointer-events-auto z-50 hover:border-4 hover:border-white"
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    onClose()
-                                    setTimeout(() => {
-                                      onPlayerClick(phase.phaseId, matchIndex, match)
-                                    }, 100)
+                                    handleCardClick(phase.phaseId, matchIndex, match)
                                   }}
                                   style={{ cursor: "pointer !important" }}
                                 >
@@ -1170,7 +1254,7 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
                     key={match.matchCode}
                     className="flex items-center gap-4"
                     ref={(el) => {
-                      matchRefs.current[index] = el;
+                      matchRefs.current[index] = el
                     }}
                   >
                     <div className="w-[calc(50%-0.5rem)] sm:w-[330px] relative">

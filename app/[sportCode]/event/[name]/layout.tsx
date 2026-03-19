@@ -5,11 +5,10 @@ import { ChevronLeft, ChevronUp } from "lucide-react"
 import Link from "next/link"
 import { DATA_POLLING_INTERVAL } from "@/config/site"
 import { cn } from "@/lib/utils"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import LoadingOverlay from "@/components/loading"
 import { buildApiUrl, buildSportPath } from "../../../../lib/sport-config"
 import { isValidSportCode, getSportConfig } from "../../../../config/sports"
-import { notFound, redirect } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import React from "react"
 
@@ -30,6 +29,7 @@ interface ApiError {
   message: string
   details: string
   sportCode?: string
+  attemptedUrl?: string
 }
 
 const BackToTopButton = ({ isModalOpen = false }: { isModalOpen?: boolean }) => {
@@ -61,6 +61,7 @@ export default function EventLayout({
   params: { sportCode: string; name: string }
 }) {
   const pathname = usePathname()
+  const router = useRouter()
   const [allData, setAllData] = useState<AllData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<ApiError | null>(null)
@@ -97,7 +98,13 @@ export default function EventLayout({
     if (params?.sportCode && params?.name) {
       // 验证 sportCode 格式是否有效
       if (!isValidSportCode(params.sportCode)) {
-        notFound()
+        setError({
+          error: "INVALID_SPORT_CODE",
+          message: "项目代码格式无效",
+          details: `项目代码 "${params.sportCode}" 格式不正确。`,
+          sportCode: params.sportCode,
+        })
+        setLoading(false)
         return
       }
 
@@ -143,7 +150,14 @@ export default function EventLayout({
         const errorData = await response.json().catch(() => ({}))
 
         if (errorData.error === "SPORT_CODE_NOT_FOUND") {
-          redirect("/")
+          setError({
+            error: "SPORT_CODE_NOT_FOUND",
+            message: `项目 "${params.sportCode}" 不存在`,
+            details: "无法找到对应项目数据，请检查项目代码或数据源路径配置。",
+            sportCode: params.sportCode,
+            attemptedUrl: errorData.attemptedUrl,
+          })
+          router.replace("/")
           return
         } else {
           setError({

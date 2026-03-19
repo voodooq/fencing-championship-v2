@@ -36,6 +36,15 @@ export default function Filters({
     return <div>Loading filters...</div>
   }
 
+  const validDates = (sysData.dates || []).filter((date) => typeof date === "string" && date.trim() !== "")
+  const validTypes = (sysData.types || []).filter((type) => typeof type.code === "string" && type.code.trim() !== "")
+  const validGenders = (sysData.genders || []).filter(
+    (gender) => typeof gender.code === "string" && gender.code.trim() !== "",
+  )
+  const validWeapons = (sysData.weapons || []).filter(
+    (weapon) => typeof weapon.code === "string" && weapon.code.trim() !== "",
+  )
+
   return (
     <div className="p-4 space-y-3">
       <div className="flex items-center">
@@ -46,7 +55,7 @@ export default function Filters({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">全部</SelectItem>
-            {sysData.dates?.map((date) => (
+            {validDates.map((date) => (
               <SelectItem key={date} value={date}>
                 {date}
               </SelectItem>
@@ -64,9 +73,9 @@ export default function Filters({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部</SelectItem>
-              {sysData.types?.map((type) => (
+              {validTypes.map((type) => (
                 <SelectItem key={`${type.code}-${type.name}`} value={type.code}>
-                  {type.name}
+                  {type.name || type.code}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -81,9 +90,9 @@ export default function Filters({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部</SelectItem>
-              {sysData.genders?.map((gender) => (
+              {validGenders.map((gender) => (
                 <SelectItem key={`${gender.code}-${gender.name}`} value={gender.code}>
-                  {gender.name}
+                  {gender.name || gender.code}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -98,9 +107,9 @@ export default function Filters({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部</SelectItem>
-              {sysData.weapons?.map((weapon) => (
+              {validWeapons.map((weapon) => (
                 <SelectItem key={`${weapon.code}-${weapon.name}`} value={weapon.code}>
-                  {weapon.name}
+                  {weapon.name || weapon.code}
                 </SelectItem>
               ))}
             </SelectContent>

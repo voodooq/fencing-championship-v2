@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
-import { notFound, redirect } from "next/navigation"
 import Header from "../../components/header"
 import Banner from "../../components/banner"
 import Filters from "../../components/filters"
@@ -61,7 +60,13 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
     if (params?.sportCode) {
       // 验证 sportCode 格式是否有效（不再检查是否在预定义列表中）
       if (!isValidSportCode(params.sportCode)) {
-        notFound()
+        setError({
+          error: "INVALID_SPORT_CODE",
+          message: "项目代码格式无效",
+          details: `项目代码 "${params.sportCode}" 格式不正确。`,
+          sportCode: params.sportCode,
+        })
+        setLoading(false)
         return
       }
 
@@ -87,8 +92,13 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
         const errorData = await response.json().catch(() => ({}))
 
         if (errorData.error === "SPORT_CODE_NOT_FOUND") {
-          redirect("/")
-          return
+          setError({
+            error: "SPORT_CODE_NOT_FOUND",
+            message: `项目 "${params.sportCode}" 不存在`,
+            details: "无法找到对应项目数据，请检查项目代码或数据源路径配置。",
+            sportCode: params.sportCode,
+            attemptedUrl: errorData.attemptedUrl,
+          })
         } else {
           setError({
             error: "HTTP_ERROR",
@@ -104,7 +114,13 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
 
       if (data.error) {
         if (data.error === "SPORT_CODE_NOT_FOUND") {
-          redirect("/")
+          setError({
+            error: "SPORT_CODE_NOT_FOUND",
+            message: `项目 "${params.sportCode}" 不存在`,
+            details: "无法找到对应项目数据，请检查项目代码或数据源路径配置。",
+            sportCode: params.sportCode,
+            attemptedUrl: data.attemptedUrl,
+          })
           return
         }
         setError(data as ApiError)
