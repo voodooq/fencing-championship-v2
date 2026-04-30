@@ -14,17 +14,17 @@
 
 ## 🛠 技术栈
 
-| 类别         | 技术                                     |
-| ------------ | ---------------------------------------- |
-| **框架**     | Next.js 14 (App Router, Standalone 输出) |
-| **前端**     | React 18 + TypeScript                   |
-| **样式**     | Tailwind CSS 3 + tailwindcss-animate     |
-| **UI 组件**  | shadcn/ui (Radix UI 原子组件)            |
-| **图标**     | Lucide React                             |
-| **图表**     | Recharts                                 |
-| **主题**     | next-themes（暗色/亮色模式）             |
-| **表单**     | React Hook Form + Zod 校验               |
-| **容器化**   | Docker（多阶段构建）                     |
+| 类别        | 技术                                     |
+| ----------- | ---------------------------------------- |
+| **框架**    | Next.js 14 (App Router, Standalone 输出) |
+| **前端**    | React 18 + TypeScript                    |
+| **样式**    | Tailwind CSS 3 + tailwindcss-animate     |
+| **UI 组件** | shadcn/ui (Radix UI 原子组件)            |
+| **图标**    | Lucide React                             |
+| **图表**    | Recharts                                 |
+| **主题**    | next-themes（暗色/亮色模式）             |
+| **表单**    | React Hook Form + Zod 校验               |
+| **容器化**  | Docker（多阶段构建）                     |
 
 ## 📁 项目结构
 
@@ -51,7 +51,8 @@ fencing-championship-v2/
 │   │   ├── getBanner/            # 获取横幅数据
 │   │   ├── getBracketData/       # 获取对阵表数据
 │   │   ├── getSysData/           # 获取系统数据
-│   │   └── batchFetch/           # 批量数据请求
+│   │   ├── batchFetch/           # 批量数据请求
+│   │   └── env/                  # 获取环境配置（如测试模式）
 │   └── pushdata/                 # 数据推送管理页面
 ├── components/                   # React 组件
 │   ├── banner.tsx                # 横幅组件
@@ -68,6 +69,7 @@ fencing-championship-v2/
 ├── hooks/                        # 自定义 Hooks
 │   ├── use-mobile.tsx            # 移动端检测
 │   ├── use-polling.ts            # 数据轮询
+│   ├── use-test-mode.ts          # 测试模式状态
 │   └── use-toast.ts              # Toast 通知
 ├── lib/                          # 工具函数库
 │   ├── sport-config.ts           # 运动项目路由 & API URL 构建
@@ -113,12 +115,12 @@ npm run dev
 
 ### 可用脚本
 
-| 命令             | 说明               |
-| ---------------- | ------------------ |
-| `npm run dev`    | 启动开发服务器     |
-| `npm run build`  | 构建生产版本       |
-| `npm run start`  | 启动生产服务器     |
-| `npm run lint`   | 运行 ESLint 检查   |
+| 命令            | 说明             |
+| --------------- | ---------------- |
+| `npm run dev`   | 启动开发服务器   |
+| `npm run build` | 构建生产版本     |
+| `npm run start` | 启动生产服务器   |
+| `npm run lint`  | 运行 ESLint 检查 |
 
 ## 🐳 Docker 部署
 
@@ -148,20 +150,16 @@ docker push crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/
 docker pull crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v5
 
 # 运行容器
-docker run -d \
-  --name fencing-all-v5 \
-  -p 3024:3000 \
-  -e FENCING_API_BASE_URL=https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore/2026 \
-  --restart unless-stopped \
-  crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v5
+docker run -d --name fencing-all-v5 -p 3024:3000 -e FENCING_API_BASE_URL=https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore/2026 -e TestModle=true --restart unless-stopped crpi-578c88c5toqsydb9.cn-zhangjiakou.personal.cr.aliyuncs.com/yyhub/fencing-competition-list:v5
 ```
 
 ## ⚙️ 环境变量
 
-| 变量名                                | 说明                    | 默认值                                                                    |
-| ------------------------------------- | ----------------------- | ------------------------------------------------------------------------- |
-| `FENCING_API_BASE_URL`                | 赛事数据 API 基地址     | `https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore`              |
-| `NEXT_PUBLIC_PUSH_DATA_API_BASE_URL`  | 数据推送 API 基地址     | `http://hhdata-d.yy-sport.com.cn:10087`                                   |
+| 变量名                               | 说明                                | 默认值                                                       |
+| ------------------------------------ | ----------------------------------- | ------------------------------------------------------------ |
+| `FENCING_API_BASE_URL`               | 赛事数据 API 基地址                 | `https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore` |
+| `NEXT_PUBLIC_PUSH_DATA_API_BASE_URL` | 数据推送 API 基地址                 | `http://hhdata-d.yy-sport.com.cn:10087`                      |
+| `TestModle`                          | 是否开启测试模式（显示“-测试成绩”） | `false`                                                      |
 
 ## 🏗 多运动项目支持
 

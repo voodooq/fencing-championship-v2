@@ -11,6 +11,7 @@ import { buildApiUrl, buildSportPath } from "../../../../lib/sport-config"
 import { isValidSportCode, getSportConfig } from "../../../../config/sports"
 import { Button } from "@/components/ui/button"
 import React from "react"
+import { useTestMode } from "../../../../hooks/use-test-mode"
 
 interface Event {
   eventId: number
@@ -67,6 +68,7 @@ export default function EventLayout({
   const [error, setError] = useState<ApiError | null>(null)
   const [event, setEvent] = useState<Event | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const isTestMode = useTestMode()
 
   const topRowTabs = useMemo(
     () => [
@@ -266,7 +268,7 @@ export default function EventLayout({
           <ChevronLeft className="h-5 w-5" />
         </Link>
         <h1 className="flex-1 text-center text-base font-medium">
-          {event.eventName} - {sportConfig.name}
+          {event.eventName} - {sportConfig.name}{isTestMode ? "-测试成绩" : ""}
         </h1>
       </header>
 

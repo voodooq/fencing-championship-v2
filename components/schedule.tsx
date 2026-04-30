@@ -53,7 +53,7 @@ export default function Schedule({ events, evnetstate = [], sportCode }: Schedul
             <div className="grid grid-cols-[80px_1fr_120px] px-3 py-1.5 bg-blue-500 text-white text-sm">
               <div>时间</div>
               <div>项目名称</div>
-              <div>状态</div>
+              <div className="text-right">状态</div>
             </div>
             {dayEvents.map((event) => (
               <Link
@@ -67,7 +67,7 @@ export default function Schedule({ events, evnetstate = [], sportCode }: Schedul
               >
                 <div>{event.openTime.substring(0, 5)}</div>
                 <div className="whitespace-nowrap overflow-hidden text-ellipsis">{event.eventName}</div>
-                <div>{getEventState(event.eventId)?.StatusDes || "未开始"}</div>
+                <div className="text-right">{getEventState(event.eventId)?.StatusDes || "未开始"}</div>
               </Link>
             ))}
           </div>
