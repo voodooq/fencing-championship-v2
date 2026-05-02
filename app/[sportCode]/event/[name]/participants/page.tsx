@@ -111,7 +111,8 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
 
   const { data: participantsData, loading, error: pollError, refresh } = usePolling({
     fetchFn,
-    enabled: !!params?.sportCode && !!params?.name
+    enabled: !!params?.sportCode && !!params?.name,
+    cacheKey: `participants_${params.sportCode}_${params.name}`
   })
 
   // Update specific lists when participantsData changes
@@ -170,7 +171,7 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
     referee.RegisterInfo.toLowerCase().includes(searchQuery.toLowerCase()),
   ), [referees, searchQuery])
 
-  if (!params?.sportCode || !params?.name || loading) {
+  if (!params?.sportCode || !params?.name || (loading && athletes.length === 0 && teams.length === 0 && referees.length === 0)) {
     return <LoadingOverlay />
   }
 

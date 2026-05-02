@@ -128,14 +128,6 @@ export default function CheckInPage({ params }: CheckInPageProps) {
           }))
         }
       }
-
-      checkInRecords.sort((a, b) => {
-        if (!a.checkInTime) return 1
-        if (!b.checkInTime) return -1
-
-        return a.checkInTime.localeCompare(b.checkInTime)
-      })
-
       setCheckInData(checkInRecords)
     } catch (error) {
       console.error("Error fetching check-in data:", error)

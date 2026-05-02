@@ -100,6 +100,31 @@ export async function POST(request: NextRequest) {
                     const { key, type, directory, eventCode, phaseId } = req
                     let url = ""
 
+                    // Special handling for fullBracket composite request
+                    if (type === "fullBracket") {
+                        const phasesUrl = `${dynamicBaseUrl}/dualPhase/${eventCode}.txt`
+                        try {
+                            const phases = await fetchWithCache(phasesUrl, cacheDuration, controller.signal)
+                            if (Array.isArray(phases)) {
+                                const matchPromises = phases.map(async (phase: any) => {
+                                    const matchUrl = `${dynamicBaseUrl}/dualPhaseMatch/${phase.phaseId}.txt`
+                                    const matches = await fetchWithCache(matchUrl, cacheDuration, controller.signal).catch(() => [])
+                                    return {
+                                        ...phase,
+                                        matches: Array.isArray(matches) ? matches : []
+                                    }
+                                })
+                                results[key] = await Promise.all(matchPromises)
+                            } else {
+                                results[key] = phases
+                            }
+                        } catch (err) {
+                            console.error(`Error in fullBracket composite fetch for ${eventCode}:`, err)
+                            results[key] = { error: true, message: String(err) }
+                        }
+                        return
+                    }
+
                     if (type === "sysData") {
                         url = `${dynamicBaseUrl}/sysData.txt`
                     } else {

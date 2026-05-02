@@ -1,0 +1,9 @@
+- [x] 修改 `PlayerCard` 组件，将 "Bye" 显示为 "轮空"
+- [x] 修改 `NextPlayerCard` 组件，将 "Bye" 显示为 "轮空"
+- [x] 修改 `ChampionCard` 组件，将 "Bye" 显示为 "轮空"
+- [x] 优化 `BracketModal` 的滑动与缩放体验
+    - [x] 移除滑动时的按钮限制
+    - [x] 优化双指捏合缩放算法
+    - [x] 实现初始视图自动适配 (Fit to screen)
+    - [x] 修复因变量初始化顺序导致的 ReferenceError
+- [x] 验证全图滑动与缩放效果

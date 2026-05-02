@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import LoadingOverlay from "@/components/loading"
 import { buildApiUrl } from "@/lib/sport-config"
-import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 
 import { usePolling } from "@/hooks/use-polling"
 
@@ -99,7 +99,7 @@ const PlayerCard = React.memo<{
       </div>
       <div className={`flex-1 flex flex-col justify-center px-3 py-2 ${!showScore ? "pr-3" : ""}`}>
         <span className={`text-nowrap ${isWinner ? "font-semibold" : "font-semibold"}`}>
-          {!regId ? "待定" : regId > 0 ? name || "" : "轮空"}
+          {name === "Bye" ? "轮空" : !regId ? "待定" : regId > 0 ? name || "" : "轮空"}
         </span>
         <span className="text-sm font-light">{regId && regId > 0 ? organization || "" : "-"}</span>
       </div>
@@ -148,7 +148,7 @@ const NextPlayerCard = React.memo<{
       <div className="flex-1 flex items-center justify-between px-2 py-2">
         <div className="flex items-center">
           <span className={`text-nowrap ${isWinner || isPlacementWinner ? "font-semibold" : "font-semibold"}`}>
-            {name || "待定"}
+            {name === "Bye" ? "轮空" : name || "待定"}
             <span className="text-sm font-light text-right"> {organization || ""}</span>
           </span>
         </div>
@@ -186,7 +186,7 @@ const ChampionCard = React.memo<{
               <div className="text-yellow-300 font-bold text-lg">冠军</div>
             </div>
             <div>
-              <div className="text-white font-bold text-xl text-nowrap">{name}</div>
+              <div className="text-white font-bold text-xl text-nowrap">{name === "Bye" ? "轮空" : name}</div>
               <div className="text-yellow-200">{organization}</div>
             </div>
             <div className="flex justify-between items-center mt-1">
@@ -231,6 +231,8 @@ const BracketModal: FC<{
     initialPosition: { x: 0, y: 0 },
     midpoint: { x: 0, y: 0 },
   })
+  // 使用 Map 跟踪活跃的指针（支持多点触控）
+  const activePointersRef = useRef(new Map<number, { x: number; y: number }>())
 
   const clampScale = useCallback((value: number) => Math.max(0.3, Math.min(8, value)), [])
 
@@ -249,215 +251,122 @@ const BracketModal: FC<{
   const VERTICAL_OFFSET = CARD_HEIGHT / 2
   const placementMatchSpacing = 350
 
-  // Reset position and scale when modal opens
-  useEffect(() => {
-    if (!isOpen) return
 
-    isDraggingRef.current = false
-    setIsDragging(false)
-    dragDistanceRef.current = 0
-    suppressClickRef.current = false
-    lastPosRef.current = { x: 0, y: 0 }
-    startPosRef.current = { x: 0, y: 0 }
-    pinchStateRef.current = {
-      initialDistance: 0,
-      initialScale: 1,
-      initialPosition: { x: 0, y: 0 },
-      midpoint: { x: 0, y: 0 },
-    }
 
-    applyTransform(1, { x: 0, y: 0 })
-  }, [isOpen, applyTransform])
+  // NOTE: 辅助计算函数，用于指针事件中的距离和中心点计算
+  const getPointerDistance = useCallback((p1: { x: number; y: number }, p2: { x: number; y: number }) =>
+    Math.hypot(p1.x - p2.x, p1.y - p2.y), [])
 
-  // Enhanced touch and drag functionality
-  useEffect(() => {
+  const getPointerMidpoint = useCallback((p1: { x: number; y: number }, p2: { x: number; y: number }) => {
     const modal = modalRef.current
-    if (!modal || !isOpen) return
-
-    const getDistance = (touches: TouchList) =>
-      Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
-
-    const getMidpoint = (touches: TouchList) => {
-      const rect = modal.getBoundingClientRect()
-      return {
-        x: (touches[0].clientX + touches[1].clientX) / 2 - rect.left,
-        y: (touches[0].clientY + touches[1].clientY) / 2 - rect.top,
-      }
+    if (!modal) return { x: 0, y: 0 }
+    const rect = modal.getBoundingClientRect()
+    return {
+      x: (p1.x + p2.x) / 2 - rect.left,
+      y: (p1.y + p2.y) / 2 - rect.top,
     }
+  }, [])
 
-    const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
-        e.preventDefault()
-        const midpoint = getMidpoint(e.touches)
+  // NOTE: 使用 React 事件而非 addEventListener，避免被 Radix Dialog 的事件拦截机制阻断
+  // NOTE: 不能调用 e.preventDefault()，否则会阻止后续的 click 事件触发（Pointer Events 规范行为）
+  // touch-action: none 已经阻止了浏览器的默认触摸手势
+  const handleModalPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return
+    e.stopPropagation()
 
-        pinchStateRef.current = {
-          initialDistance: getDistance(e.touches),
-          initialScale: scaleRef.current,
-          initialPosition: { ...positionRef.current },
-          midpoint,
-        }
+    const ap = activePointersRef.current
+    ap.set(e.pointerId, { x: e.clientX, y: e.clientY })
 
-        dragDistanceRef.current = 0
-        suppressClickRef.current = true
-        isDraggingRef.current = false
-        setIsDragging(false)
-        return
-      }
-
-      if (e.touches.length === 1) {
-        startPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-        lastPosRef.current = { ...positionRef.current }
-        dragDistanceRef.current = 0
-        suppressClickRef.current = false
-        isDraggingRef.current = true
-        setIsDragging(true)
-      }
-    }
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
-        e.preventDefault()
-
-        const currentDistance = getDistance(e.touches)
-        const currentMidpoint = getMidpoint(e.touches)
-        const { initialDistance, initialScale, initialPosition, midpoint } = pinchStateRef.current
-
-        if (!initialDistance || initialScale <= 0) return
-
-        const newScale = clampScale(initialScale * (currentDistance / initialDistance))
-        const worldX = (midpoint.x - initialPosition.x) / initialScale
-        const worldY = (midpoint.y - initialPosition.y) / initialScale
-
-        applyTransform(newScale, {
-          x: currentMidpoint.x - worldX * newScale,
-          y: currentMidpoint.y - worldY * newScale,
-        })
-
-        return
-      }
-
-      if (e.touches.length === 1 && isDraggingRef.current) {
-        e.preventDefault()
-
-        const dx = e.touches[0].clientX - startPosRef.current.x
-        const dy = e.touches[0].clientY - startPosRef.current.y
-
-        dragDistanceRef.current = Math.hypot(dx, dy)
-        if (dragDistanceRef.current > 8) {
-          suppressClickRef.current = true
-        }
-
-        applyTransform(scaleRef.current, {
-          x: lastPosRef.current.x + dx,
-          y: lastPosRef.current.y + dy,
-        })
-      }
-    }
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        startPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-        lastPosRef.current = { ...positionRef.current }
-        pinchStateRef.current.initialDistance = 0
-        dragDistanceRef.current = 0
-        suppressClickRef.current = true
-        isDraggingRef.current = true
-        setIsDragging(true)
-        return
-      }
-
-      pinchStateRef.current.initialDistance = 0
-      if (dragDistanceRef.current > 8 || e.changedTouches.length > 1) {
-        suppressClickRef.current = true
-      }
-      dragDistanceRef.current = 0
-      isDraggingRef.current = false
-      setIsDragging(false)
-    }
-
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault()
-
-      const rect = modal.getBoundingClientRect()
-      const focalPoint = {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      }
-      const zoomFactor = e.deltaY < 0 ? 1.15 : 1 / 1.15
-      const newScale = clampScale(scaleRef.current * zoomFactor)
-      const worldX = (focalPoint.x - positionRef.current.x) / scaleRef.current
-      const worldY = (focalPoint.y - positionRef.current.y) / scaleRef.current
-
-      applyTransform(newScale, {
-        x: focalPoint.x - worldX * newScale,
-        y: focalPoint.y - worldY * newScale,
-      })
-    }
-
-    const handleMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return
-
-      const target = e.target as HTMLElement
-      if (target.tagName === "BUTTON" || target.closest("button")) {
-        return
-      }
-
+    if (ap.size === 1) {
       isDraggingRef.current = true
       setIsDragging(true)
       startPosRef.current = { x: e.clientX, y: e.clientY }
       lastPosRef.current = { ...positionRef.current }
       dragDistanceRef.current = 0
       suppressClickRef.current = false
-      e.preventDefault()
+    } else if (ap.size === 2) {
+      const pointers = Array.from(ap.values())
+      pinchStateRef.current = {
+        initialDistance: getPointerDistance(pointers[0], pointers[1]),
+        initialScale: scaleRef.current,
+        initialPosition: { ...positionRef.current },
+        midpoint: getPointerMidpoint(pointers[0], pointers[1]),
+      }
+      suppressClickRef.current = true
     }
+  }, [getPointerDistance, getPointerMidpoint])
 
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDraggingRef.current) return
+  const handleModalPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const ap = activePointersRef.current
+    if (!ap.has(e.pointerId)) return
+    e.preventDefault()
 
+    ap.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+    if (ap.size === 2) {
+      const pointers = Array.from(ap.values())
+      const currentDistance = getPointerDistance(pointers[0], pointers[1])
+      const currentMidpoint = getPointerMidpoint(pointers[0], pointers[1])
+      const { initialDistance, initialScale, initialPosition, midpoint } = pinchStateRef.current
+
+      if (initialDistance > 0) {
+        const newScale = clampScale(initialScale * (currentDistance / initialDistance))
+        const worldX = (midpoint.x - initialPosition.x) / initialScale
+        const worldY = (midpoint.y - initialPosition.y) / initialScale
+        applyTransform(newScale, {
+          x: currentMidpoint.x - worldX * newScale,
+          y: currentMidpoint.y - worldY * newScale,
+        })
+      }
+    } else if (ap.size === 1 && isDraggingRef.current) {
       const dx = e.clientX - startPosRef.current.x
       const dy = e.clientY - startPosRef.current.y
-
       dragDistanceRef.current = Math.hypot(dx, dy)
-      if (dragDistanceRef.current > 8) {
+      if (dragDistanceRef.current > 10) {
         suppressClickRef.current = true
       }
-
       applyTransform(scaleRef.current, {
         x: lastPosRef.current.x + dx,
         y: lastPosRef.current.y + dy,
       })
     }
+  }, [clampScale, applyTransform, getPointerDistance, getPointerMidpoint])
 
-    const handleMouseUp = () => {
-      if (!isDraggingRef.current) return
-
-      if (dragDistanceRef.current > 8) {
-        suppressClickRef.current = true
+  const handleModalPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const ap = activePointersRef.current
+    if (ap.size === 2) {
+      const remainingId = Array.from(ap.keys()).find(id => id !== e.pointerId)
+      if (remainingId) {
+        const remaining = ap.get(remainingId)!
+        startPosRef.current = { x: remaining.x, y: remaining.y }
+        lastPosRef.current = { ...positionRef.current }
       }
-
+    }
+    ap.delete(e.pointerId)
+    if (ap.size === 0) {
       isDraggingRef.current = false
       setIsDragging(false)
-      dragDistanceRef.current = 0
     }
+  }, [])
 
-    modal.addEventListener("touchstart", handleTouchStart, { passive: false })
-    modal.addEventListener("touchmove", handleTouchMove, { passive: false })
-    modal.addEventListener("touchend", handleTouchEnd)
-    modal.addEventListener("wheel", handleWheel, { passive: false })
-    modal.addEventListener("mousedown", handleMouseDown)
-    window.addEventListener("mousemove", handleMouseMove)
-    window.addEventListener("mouseup", handleMouseUp)
-
-    return () => {
-      modal.removeEventListener("touchstart", handleTouchStart)
-      modal.removeEventListener("touchmove", handleTouchMove)
-      modal.removeEventListener("touchend", handleTouchEnd)
-      modal.removeEventListener("wheel", handleWheel)
-      modal.removeEventListener("mousedown", handleMouseDown)
-      window.removeEventListener("mousemove", handleMouseMove)
-      window.removeEventListener("mouseup", handleMouseUp)
+  // NOTE: 使用 React onWheel 处理滚轮缩放（弹窗内 overflow:hidden 无需 preventDefault）
+  const handleModalWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const modal = modalRef.current
+    if (!modal) return
+    const rect = modal.getBoundingClientRect()
+    const focalPoint = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
     }
-  }, [isOpen, clampScale, applyTransform])
+    const zoomFactor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+    const newScale = clampScale(scaleRef.current * zoomFactor)
+    const worldX = (focalPoint.x - positionRef.current.x) / scaleRef.current
+    const worldY = (focalPoint.y - positionRef.current.y) / scaleRef.current
+    applyTransform(newScale, {
+      x: focalPoint.x - worldX * newScale,
+      y: focalPoint.y - worldY * newScale,
+    })
+  }, [clampScale, applyTransform])
 
   const handleCardClick = useCallback((phaseId: number, matchIndex: number, match: Match) => {
     if (suppressClickRef.current || dragDistanceRef.current > 8) {
@@ -552,11 +461,60 @@ const BracketModal: FC<{
     return { matchPositions, phaseHorizontalPositions }
   }, [bracketData])
 
+  // Reset position and scale when modal opens
+  useEffect(() => {
+    if (!isOpen || !modalRef.current) return
+
+    isDraggingRef.current = false
+    setIsDragging(false)
+    dragDistanceRef.current = 0
+    suppressClickRef.current = false
+    lastPosRef.current = { x: 0, y: 0 }
+    startPosRef.current = { x: 0, y: 0 }
+    pinchStateRef.current = {
+      initialDistance: 0,
+      initialScale: 1,
+      initialPosition: { x: 0, y: 0 },
+      midpoint: { x: 0, y: 0 },
+    }
+
+    // Calculate initial fit-to-screen scale and position
+    if (bracketData.length > 0 && phaseHorizontalPositions.length > 0) {
+      const contentWidth = phaseHorizontalPositions[phaseHorizontalPositions.length - 1] + CARD_WIDTH + 100
+      const allMatchPositions = Object.values(matchPositions).flat()
+      if (allMatchPositions.length > 0) {
+        const minY = Math.min(...allMatchPositions) - 100
+        const maxY = Math.max(...allMatchPositions) + 200
+        const contentHeight = maxY - minY
+
+        const viewportWidth = window.innerWidth
+        const viewportHeight = window.innerHeight
+
+        const scaleX = (viewportWidth - 40) / contentWidth
+        const scaleY = (viewportHeight - 40) / contentHeight
+        const initialScale = clampScale(Math.min(scaleX, scaleY))
+
+        const initialX = (viewportWidth - contentWidth * initialScale) / 2
+        const initialY = (viewportHeight / 2) - (minY + contentHeight / 2) * initialScale
+
+        applyTransform(initialScale, { x: initialX, y: initialY })
+      } else {
+        applyTransform(1, { x: 0, y: 0 })
+      }
+    } else {
+      applyTransform(1, { x: 0, y: 0 })
+    }
+  }, [isOpen, applyTransform, bracketData, phaseHorizontalPositions, matchPositions, clampScale, CARD_WIDTH])
+
   if (!isOpen) return null
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-[100vw] max-h-[100vh] w-full h-full p-0 border-0">
+        <DialogHeader className="sr-only">
+          <DialogTitle>淘汰赛全图</DialogTitle>
+          <DialogDescription>查看比赛的所有对阵情况和晋级路线</DialogDescription>
+        </DialogHeader>
         {/* 关闭按钮 - 固定在右上角 */}
         <Button
           variant="ghost"
@@ -574,6 +532,11 @@ const BracketModal: FC<{
             cursor: isDragging ? "grabbing" : "grab",
             touchAction: "none",
           }}
+          onPointerDown={handleModalPointerDown}
+          onPointerMove={handleModalPointerMove}
+          onPointerUp={handleModalPointerUp}
+          onPointerCancel={handleModalPointerUp}
+          onWheel={handleModalWheel}
         >
           <div
             ref={contentRef}
@@ -722,20 +685,18 @@ const BracketModal: FC<{
                                   showPlacementLabel={!isPlacementPhase || !isFinalPhase}
                                   showScore={false}
                                 />
-                                <button
-                                  className="absolute inset-0 w-full h-full bg-transparent hover:bg-white/30 active:bg-white/50 transition-colors duration-150 cursor-pointer pointer-events-auto z-50 hover:border-4 hover:border-white"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
+                                <div
+                                  className="absolute inset-0 w-full h-full bg-transparent hover:bg-white/30 active:bg-white/50 transition-colors duration-150 cursor-pointer z-20 hover:border-4 hover:border-white"
+                                  onClick={() => {
                                     handleCardClick(phase.phaseId, matchIndex, match)
                                   }}
-                                  style={{ cursor: "pointer !important" }}
                                 >
                                   <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100">
                                     <div className="bg-black bg-opacity-50 text-white px-2 py-1 rounded text-sm">
                                       点击关闭并跳转
                                     </div>
                                   </div>
-                                </button>
+                                </div>
                               </div>
 
                               {showReferees && (
@@ -913,53 +874,33 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
   const fetchFn = useCallback(async (isPolling: boolean) => {
     if (!params?.sportCode || !params?.name) return []
 
-    // 1. Fetch phases
+    // Use the new composite API to fetch everything in one go
     const response = await fetch("/api/batchFetch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sportCode: params.sportCode,
-        requests: [{ key: "phases", directory: "dualPhase", eventCode: params.name }],
+        requests: [{ key: "bracketData", type: "fullBracket", eventCode: params.name }],
       }),
     })
 
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
     const batchRes = await response.json()
-    const phases = batchRes.phases
-    if (!Array.isArray(phases)) throw new Error("Invalid phase data format received")
+    const data = batchRes.bracketData
+    
+    if (!Array.isArray(data)) {
+        if (data?.error) throw new Error(data.message)
+        throw new Error("Invalid bracket data format received")
+    }
 
-    const sortedPhases = phases.sort((a: any, b: any) => a.phaseOrder - b.phaseOrder)
-
-    // 2. Fetch matches for all phases
-    const matchRequests = sortedPhases.map((phase: any) => ({
-      key: `matches_${phase.phaseId}`,
-      directory: "dualPhaseMatch",
-      phaseId: phase.phaseId,
-    }))
-
-    const matchResponse = await fetch("/api/batchFetch", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        sportCode: params.sportCode,
-        requests: matchRequests,
-      }),
-    })
-
-    if (!matchResponse.ok) throw new Error(`HTTP error fetching matches! status: ${matchResponse.status}`)
-    const matchBatchRes = await matchResponse.json()
-
-    return sortedPhases.map((phase: any) => ({
-      ...phase,
-      matches: matchBatchRes[`matches_${phase.phaseId}`] || [],
-    }))
+    // Still sort them by phaseOrder to be safe
+    return data.sort((a: any, b: any) => a.phaseOrder - b.phaseOrder)
   }, [params])
 
   const { data: fetchedBracketData, loading: pollingLoading, error: pollError, refresh } = usePolling<BracketData[]>({
     fetchFn,
-    enabled: !!params?.sportCode && !!params?.name
+    enabled: !!params?.sportCode && !!params?.name,
+    cacheKey: `brackets_${params.sportCode}_${params.name}`
   })
 
   // Sync polling result to state
@@ -1137,7 +1078,7 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
   //   }
   // }, [isModalOpen, setModalOpen])
 
-  if (!params?.sportCode || !params?.name || loading) {
+  if (!params?.sportCode || !params?.name || (loading && bracketData.length === 0)) {
     return <LoadingOverlay />
   }
 

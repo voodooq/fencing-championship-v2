@@ -6,40 +6,60 @@ interface UsePollingOptions<T> {
     interval?: number
     deps?: any[]
     enabled?: boolean
+    cacheKey?: string // 唯一缓存键，用于持久化数据
 }
 
 /**
  * 通用智能轮询 Hook
- * 通过对比数据 Hash (JSON 字符串) 减少不必要的重渲染
+ * 支持 Stale-While-Revalidate 模式与持久化缓存
  */
 export function usePolling<T>({
     fetchFn,
     interval = DATA_POLLING_INTERVAL,
     deps = [],
     enabled = true,
+    cacheKey,
 }: UsePollingOptions<T>) {
-    const [data, setData] = useState<T | null>(null)
-    const [loading, setLoading] = useState(true)
+    // 尝试从缓存初始化数据
+    const [data, setData] = useState<T | null>(() => {
+        if (typeof window !== "undefined" && cacheKey) {
+            const cached = sessionStorage.getItem(`cache_poll_${cacheKey}`)
+            if (cached) {
+                try {
+                    return JSON.parse(cached)
+                } catch (e) {
+                    return null
+                }
+            }
+        }
+        return null
+    })
+
+    // 如果已经有缓存数据，初始 loading 设为 false，实现秒开
+    const [loading, setLoading] = useState(!data)
     const [error, setError] = useState<any>(null)
 
-    // 使用 ref 存储上一次数据的字符串表示，用于比对
-    const lastDataStringRef = useRef<string>("")
+    const lastDataStringRef = useRef<string>(data ? JSON.stringify(data) : "")
     const isInitialFetchRef = useRef<boolean>(true)
 
     const executeFetch = useCallback(
         async (isPolling = false) => {
             try {
-                if (!isPolling && isInitialFetchRef.current) {
+                // 只有在既不是轮询、也不是初始有缓存数据的情况下，才显示 loading
+                if (!isPolling && isInitialFetchRef.current && !data) {
                     setLoading(true)
                 }
 
                 const result = await fetchFn(isPolling)
                 const resultString = JSON.stringify(result)
 
-                // 智能比对：只有当数据发生实际变化时才更新 state
                 if (resultString !== lastDataStringRef.current) {
                     setData(result)
                     lastDataStringRef.current = resultString
+                    // 同步到缓存
+                    if (cacheKey && typeof window !== "undefined") {
+                        sessionStorage.setItem(`cache_poll_${cacheKey}`, resultString)
+                    }
                 }
 
                 if (isInitialFetchRef.current) {
@@ -53,13 +73,12 @@ export function usePolling<T>({
                 setLoading(false)
             }
         },
-        [fetchFn],
+        [fetchFn, cacheKey, data],
     )
 
     useEffect(() => {
         if (!enabled) return
 
-        // 立即执行一次初始获取
         executeFetch()
 
         const intervalId = setInterval(() => {
