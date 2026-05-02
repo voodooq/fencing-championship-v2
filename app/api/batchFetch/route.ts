@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import crypto from "crypto"
 
 // Get the base URL from environment variable
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
@@ -82,6 +83,7 @@ export async function POST(request: NextRequest) {
     try {
         const body = await request.json()
         const { sportCode, requests } = body
+        const clientEtag = request.headers.get("if-none-match")
 
         if (!sportCode || !Array.isArray(requests)) {
             return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
@@ -155,7 +157,21 @@ export async function POST(request: NextRequest) {
             clearTimeout(timeoutId)
         }
 
-        return NextResponse.json(results)
+        // Calculate hash for the entire results object
+        const resultsString = JSON.stringify(results)
+        const serverEtag = crypto.createHash("md5").update(resultsString).digest("hex")
+
+        // If client provided an etag and it matches, return "not modified"
+        if (clientEtag === serverEtag) {
+            return NextResponse.json({ modified: false, etag: serverEtag })
+        }
+
+        // BACKWARD COMPATIBILITY: If no etag was sent, return raw results
+        if (!clientEtag) {
+            return NextResponse.json(results)
+        }
+
+        return NextResponse.json({ modified: true, data: results, etag: serverEtag })
     } catch (error) {
         console.error("Error in batchFetch:", error)
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 })

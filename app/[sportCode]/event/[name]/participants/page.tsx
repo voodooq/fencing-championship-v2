@@ -69,7 +69,7 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
   const [referees, setReferees] = useState<Referee[]>([])
   const [event, setEvent] = useState<Event | null>(null)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
-  const fetchFn = useCallback(async (isPolling: boolean) => {
+  const fetchFn = useCallback(async (isPolling: boolean, etag?: string) => {
     if (!params?.sportCode || !params?.name) return null
 
     let currentEvent = event
@@ -80,7 +80,7 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
       })
       if (sysResponse.ok) {
         const sysRes = await sysResponse.json()
-        const evt = sysRes.sysData?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
+        const evt = sysRes.data?.sysData?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
         if (evt) { currentEvent = evt; setEvent(evt); }
       }
     }
@@ -92,21 +92,35 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
 
     const batchResponse = await fetch("/api/batchFetch", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        ...(etag ? { "if-none-match": etag } : {})
+      },
       body: JSON.stringify({ sportCode: params.sportCode, requests }),
     })
 
     if (!batchResponse.ok) throw new Error(`Batch fetch failed: ${batchResponse.status}`)
-    const batchData = await batchResponse.json()
+    const batchRes = await batchResponse.json()
+
+    // 兼容性处理
+    const isNewFormat = batchRes && typeof batchRes === "object" && "modified" in batchRes;
+
+    if (isNewFormat && batchRes.modified === false) {
+      return { modified: false }
+    }
 
     if (!currentEvent) return null
 
-    const participantsData = currentEvent.typeCode === "T" ? batchData.startListTeam : batchData.startList
+    const rawResult = isNewFormat ? batchRes.data : batchRes;
+    const participantsData = currentEvent.typeCode === "T" ? rawResult?.startListTeam : rawResult?.startList
+    
     if (!participantsData || participantsData.error) {
       throw new Error(`Failed to fetch participants data: ${participantsData?.status || 'Unknown error'}`)
     }
 
-    return participantsData
+    return isNewFormat 
+      ? { modified: true, data: participantsData, etag: batchRes.etag }
+      : participantsData;
   }, [params, event])
 
   const { data: participantsData, loading, error: pollError, refresh } = usePolling({

@@ -871,13 +871,16 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
 
   const matchRefs = useRef<(HTMLDivElement | null)[]>([])
 
-  const fetchFn = useCallback(async (isPolling: boolean) => {
+  const fetchFn = useCallback(async (isPolling: boolean, etag?: string) => {
     if (!params?.sportCode || !params?.name) return []
 
     // Use the new composite API to fetch everything in one go
     const response = await fetch("/api/batchFetch", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        ...(etag ? { "if-none-match": etag } : {})
+      },
       body: JSON.stringify({
         sportCode: params.sportCode,
         requests: [{ key: "bracketData", type: "fullBracket", eventCode: params.name }],
@@ -886,15 +889,26 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
 
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
     const batchRes = await response.json()
-    const data = batchRes.bracketData
     
-    if (!Array.isArray(data)) {
-        if (data?.error) throw new Error(data.message)
+    // 兼容性处理：判断是新版带指纹格式还是旧版原始格式
+    const isNewFormat = batchRes && typeof batchRes === "object" && "modified" in batchRes;
+    
+    if (isNewFormat && batchRes.modified === false) {
+      return { modified: false }
+    }
+
+    const rawData = isNewFormat ? batchRes.data?.bracketData : batchRes.bracketData;
+    
+    if (!Array.isArray(rawData)) {
+        if (rawData?.error) throw new Error(rawData.message)
         throw new Error("Invalid bracket data format received")
     }
 
     // Still sort them by phaseOrder to be safe
-    return data.sort((a: any, b: any) => a.phaseOrder - b.phaseOrder)
+    const sortedData = rawData.sort((a: any, b: any) => a.phaseOrder - b.phaseOrder)
+    return isNewFormat 
+      ? { modified: true, data: sortedData, etag: batchRes.etag }
+      : sortedData; // 旧版格式直接返回数据
   }, [params])
 
   const { data: fetchedBracketData, loading: pollingLoading, error: pollError, refresh } = usePolling<BracketData[]>({
@@ -906,7 +920,7 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
   // Sync polling result to state
   useEffect(() => {
     setLoading(pollingLoading); // Sync loading state
-    if (fetchedBracketData) {
+    if (fetchedBracketData && Array.isArray(fetchedBracketData)) {
       setBracketData(fetchedBracketData)
       // Only set initial phase if not already set
       if (currentPhaseId === 0 && fetchedBracketData[0]) {
@@ -1078,7 +1092,7 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
   //   }
   // }, [isModalOpen, setModalOpen])
 
-  if (!params?.sportCode || !params?.name || (loading && bracketData.length === 0)) {
+  if (!params?.sportCode || !params?.name || (loading && (!bracketData || bracketData.length === 0))) {
     return <LoadingOverlay />
   }
 
