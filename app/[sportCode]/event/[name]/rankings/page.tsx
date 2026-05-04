@@ -1,11 +1,10 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { cn } from "@/lib/utils"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
-import { buildApiUrl } from "@/lib/sport-config"
-import { DATA_POLLING_INTERVAL } from "@/config/site"
+import { usePolling } from "@/hooks/use-polling"
 
 interface Athlete {
   rank: number
@@ -22,79 +21,91 @@ interface RankingsData {
 export default function RankingsPage({ params }: { params: { sportCode: string; name: string } }) {
   const [data, setData] = useState<RankingsData | null>(null)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
-  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (!params?.sportCode || !params?.name) return
+  /**
+   * 获取排名数据
+   * 从 getSysData 迁移到 batchFetch 以获得 ETag 指纹比对支持
+   */
+  const fetchFn = useCallback(async (isPolling: boolean, etag?: string) => {
+    if (!params?.sportCode || !params?.name) return null
 
-    const fetchData = async (isPolling = false) => {
-      try {
-        if (!isPolling) setLoading(true)
-        setError(null)
-        const response = await fetch(
-          buildApiUrl(
-            "/api/getSysData",
-            {
-              eventCode: encodeURIComponent(params.name),
-              directory: "eventRank",
-            },
-            params.sportCode,
-          ),
-        )
+    const response = await fetch("/api/batchFetch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(etag ? { "if-none-match": etag } : {}),
+      },
+      body: JSON.stringify({
+        sportCode: params.sportCode,
+        requests: [
+          { key: "eventRank", directory: "eventRank", eventCode: params.name },
+        ],
+      }),
+    })
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
-        }
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
 
-        const rawData = await response.json()
-        if (!Array.isArray(rawData)) {
-          throw new Error("Invalid data structure received")
-        }
+    const result = await response.json()
 
-        const processedData: RankingsData = {
-          athletes: rawData.map((item: any) => ({
-            rank: item.rank,
-            regName: item.regName,
-            orgName: item.orgName,
-            medalCode: item.medalCode,
-            teamMember: item.teamMember,
-          })),
-        }
-        setData(processedData)
-      } catch (error) {
-        console.error("Error fetching rankings data:", error)
-        if (error instanceof Error && error.message.includes("HTTP error! status: 500")) {
-          setError({ type: "no_data", message: "当前没有数据" })
-        } else {
-          setError({
-            type: "other",
-            message: `Failed to load rankings data: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
-          })
-        }
-      } finally {
-        if (!isPolling) setLoading(false)
+    // ETag 新格式处理
+    if (result && typeof result === "object" && "modified" in result) {
+      if (result.modified === false) {
+        return { modified: false }
       }
-    }
-
-    fetchData()
-
-    const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
-
-    // NOTE: 可见性感知 — 切回前台时立即刷新
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        fetchData(true)
+      if (result.etag) {
+        return { modified: true, data: result.data, etag: result.etag }
       }
+      return result.data
     }
-    document.addEventListener("visibilitychange", handleVisibility)
 
-    return () => {
-      clearInterval(intervalId)
-      document.removeEventListener("visibilitychange", handleVisibility)
-    }
+    return result
   }, [params])
 
-  if (!params?.sportCode || !params?.name || loading) {
+  const { data: pollingData, loading, error: pollError, refresh } = usePolling<Record<string, any>>({
+    fetchFn,
+    enabled: !!params?.sportCode && !!params?.name,
+    cacheKey: `rankings_${params.sportCode}_${params.name}`,
+  })
+
+  // 将轮询数据映射到组件状态
+  useEffect(() => {
+    if (!pollingData) return
+
+    // 兼容两种返回格式：直接数据 或 { eventRank: [...] }
+    const rawData = pollingData.eventRank || pollingData
+    if (!Array.isArray(rawData)) return
+
+    const processedData: RankingsData = {
+      athletes: rawData.map((item: any) => ({
+        rank: item.rank,
+        regName: item.regName,
+        orgName: item.orgName,
+        medalCode: item.medalCode,
+        teamMember: item.teamMember,
+      })),
+    }
+    setData(processedData)
+  }, [pollingData])
+
+  // 错误状态映射
+  useEffect(() => {
+    if (pollError) {
+      if (pollError.message?.includes("500")) {
+        setError({ type: "no_data", message: "当前没有数据" })
+      } else {
+        setError({
+          type: "other",
+          message: `Failed to load rankings data: ${pollError.message}`,
+        })
+      }
+    } else {
+      setError(null)
+    }
+  }, [pollError])
+
+  if (!params?.sportCode || !params?.name || (loading && !data)) {
     return <LoadingOverlay />
   }
 
@@ -104,7 +115,7 @@ export default function RankingsPage({ params }: { params: { sportCode: string; 
         <div className={`text-lg ${error.type === "no_data" ? "text-gray-600" : "text-red-500"} mb-4`}>
           {error.message}
         </div>
-        {error.type === "other" && <Button onClick={() => window.location.reload()}>重试</Button>}
+        {error.type === "other" && <Button onClick={() => refresh()}>重试</Button>}
       </div>
     )
   }

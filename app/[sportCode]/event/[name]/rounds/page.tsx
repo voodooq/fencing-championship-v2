@@ -3,8 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
-import { buildApiUrl } from "@/lib/sport-config"
-import { DATA_POLLING_INTERVAL } from "@/config/site"
+import { usePolling } from "@/hooks/use-polling"
 
 interface EventFormat {
   EventID: number
@@ -28,18 +27,18 @@ interface Event {
 export default function RoundsPage({ params }: { params: { sportCode: string; name: string } }) {
   const [eventFormat, setEventFormat] = useState<EventFormat | null>(null)
   const [event, setEvent] = useState<Event | null>(null)
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
 
-  // Note: this page no longer accepts an external `event` prop. The page will resolve `event` by fetching
-  // `sysData` inside `fetchEventData()` if needed, which avoids build-time type validation errors.
+  /**
+   * 获取比赛轮次数据
+   * 多步依赖获取：sysData → event → startList/startListTeam → formatData
+   */
+  const fetchFn = useCallback(async (isPolling: boolean, etag?: string) => {
+    if (!params?.sportCode || !params?.name) return null
 
-  const fetchEventData = useCallback(async (isPolling = false) => {
-    if (!params?.sportCode || !params?.name) return
-    // If we have event data from state, use it; otherwise we'll fetch from sysData.
     let currentEvent = event
 
-    // Fallback: If no event prop, fetch sysData
+    // 首次获取 event 信息
     if (!currentEvent) {
       try {
         const sysResponse = await fetch("/api/batchFetch", {
@@ -47,14 +46,17 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sportCode: params.sportCode,
-            requests: [{ key: "sysData", type: "sysData" }]
-          })
+            requests: [{ key: "sysData", type: "sysData" }],
+          }),
         })
         if (sysResponse.ok) {
           const sysData = await sysResponse.json()
-          const eventList = sysData.sysData?.[4]
+          const sysDataArr = sysData.data?.sysData || sysData.sysData
+          const eventList = sysDataArr?.[4]
           if (Array.isArray(eventList)) {
-            currentEvent = eventList.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
+            currentEvent = eventList.find(
+              (e: Event) => e.eventCode === decodeURIComponent(params.name),
+            )
             if (currentEvent) setEvent(currentEvent)
           }
         }
@@ -65,167 +67,118 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
 
     if (!currentEvent) {
       console.error("Could not determine event data")
-      if (!isPolling) setLoading(false)
-      return
+      return null
     }
 
+    const typeCode = currentEvent.typeCode
+    if (typeCode === "E") {
+      // E 类型无需额外数据
+      return null
+    }
+
+    // 根据 typeCode 决定请求的 directory
+    const directory = typeCode === "T" ? "startListTeam" : "startList"
+
+    // 合并为单次 batchFetch 请求
+    const batchResponse = await fetch("/api/batchFetch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(etag ? { "if-none-match": etag } : {}),
+      },
+      body: JSON.stringify({
+        sportCode: params.sportCode,
+        requests: [
+          { key: "formatData", directory: directory, eventCode: decodeURIComponent(params.name) },
+        ],
+      }),
+    })
+
+    if (!batchResponse.ok) {
+      throw new Error("Failed to fetch format data")
+    }
+
+    const result = await batchResponse.json()
+
+    // ETag 新格式处理
+    if (result && typeof result === "object" && "modified" in result) {
+      if (result.modified === false) {
+        return { modified: false }
+      }
+      return {
+        modified: true,
+        data: { ...result.data, _typeCode: typeCode },
+        etag: result.etag,
+      }
+    }
+
+    return { ...result, _typeCode: typeCode }
+  }, [params, event])
+
+  const { data: pollingData, loading, error: pollError, refresh } = usePolling<Record<string, any>>({
+    fetchFn,
+    enabled: !!params?.sportCode && !!params?.name,
+    cacheKey: `rounds_${params.sportCode}_${params.name}`,
+  })
+
+  // 将轮询数据映射到组件状态
+  useEffect(() => {
+    if (!pollingData) return
+
     try {
-      if (!isPolling) setLoading(true)
-      setError(null)
-      //console.log("Fetching data...")
+      const formatData = pollingData.formatData
+      const typeCode = pollingData._typeCode
 
-      const requests = []
-
-      // Determine requests based on typeCode
-      // Note: We need to know which startList to fetch.
-      /* 
-         Previous logic: 
-         1. Fetch sysData -> get event -> check typeCode
-         2. If typeCode!=T && !=E -> get startList
-         3. If typeCode==T -> get startListTeam
-      */
-
-      const typeCode = currentEvent.typeCode
-
-      if (typeCode !== "E") {
-        if (typeCode === "T") {
-          requests.push({ key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) })
-        } else {
-          requests.push({ key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) })
-        }
-      }
-
-      if (requests.length === 0) {
-        // If only 'E', we might not need any extra data here? 
-        // Previous code fetched sysData, then if E, did nothing more?
-        // Let's check original code logic.
-        setLoading(false)
-        return
-      }
-
-      const batchResponse = await fetch("/api/batchFetch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          sportCode: params.sportCode,
-          requests: requests
-        })
-      });
-
-      if (!batchResponse.ok) {
-        throw new Error("Failed to fetch sysData");
-      }
-      const batchData = await batchResponse.json();
-      // currentEvent is already available from outer scope
-      if (!currentEvent) {
-        if (!isPolling) setLoading(false)
-        return
-      }
-
-      // Determine directory based on typeCode
-      const directory = currentEvent.typeCode === "T" ? "startListTeam" : "startList"
-
-      // Now fetch the format data
-      // Optimization: We could have fetched this in the first batch if we knew the directory.
-      // But we need headers to know the directory. 
-      // Typically sysData is cached so this is fast.
-      // Or we can just fetch both "startList" and "startListTeam" in the batch and use the right one?
-      // Let's stick with two steps if logic requires it, OR just fetch the one we need. 
-      // Actually, to fully optimize, we can modify batchFetch to accept 
-      // requests = [{ key: "startList", directory: "startList", ... }, { key: "startListTeam", ... }]
-      // and then pick the right one.
-
-      const formatResponse = await fetch("/api/batchFetch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sportCode: params.sportCode,
-          requests: [
-            { key: "formatData", directory: directory, eventCode: decodeURIComponent(params.name) }
-          ]
-        })
-      });
-
-      if (!formatResponse.ok) {
-        throw new Error("Failed to fetch format data");
-      }
-
-      const formatBatchData = await formatResponse.json();
-      const formatData = formatBatchData.formatData;
-
-      if (formatData.error) {
-        throw new Error(formatData.message || "Failed to fetch format data")
+      if (!formatData || formatData.error) {
+        throw new Error(formatData?.message || "Failed to fetch format data")
       }
 
       if (Array.isArray(formatData) && formatData.length >= 1) {
-        // Check if format data exists at expected index
-        const index = currentEvent.typeCode === "T" ? 3 : 2
+        const index = typeCode === "T" ? 3 : 2
         const relevantFormatData = formatData[index]
 
         if (!relevantFormatData) {
-          console.error("Format data missing at index", index, "Full data:", formatData)
+          console.error("Format data missing at index", index)
           throw new Error(`无法获取赛制信息 (Data missing at index ${index})`)
         }
 
         if (Array.isArray(relevantFormatData) && relevantFormatData.length > 0) {
           setEventFormat(relevantFormatData[0])
         } else {
-          // If it's an object (not array) or empty array?
-          // If it's empty array, passing it might be fine, or check logic.
-          // For now, assume if it exists it's valid enough to stop loading.
           setEventFormat(relevantFormatData as any || {})
         }
+        setError(null)
       } else {
         throw new Error("数据格式不正确")
       }
-    } catch (error) {
-      console.error("Error fetching event data:", error)
-      if (error instanceof Error && error.message.includes("HTTP error! status: 500")) {
+    } catch (err) {
+      console.error("Error processing rounds data:", err)
+      if (err instanceof Error && err.message.includes("500")) {
         setError({ type: "no_data", message: "当前没有数据" })
       } else {
         setError({
           type: "other",
-          message: `Failed to load event data: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+          message: `Failed to load event data: ${err instanceof Error ? err.message : JSON.stringify(err)}`,
         })
       }
-    } finally {
-      if (!isPolling) setLoading(false)
     }
-  }, [params, event])
+  }, [pollingData])
 
+  // 错误状态映射
   useEffect(() => {
-    if (params?.sportCode && params?.name) {
-      fetchEventData().catch((error) => {
-        console.error("Unhandled error in fetchEventData:", error)
+    if (pollError) {
+      if (pollError.message?.includes("500")) {
+        setError({ type: "no_data", message: "当前没有数据" })
+      } else {
         setError({
           type: "other",
-          message: `Unhandled error: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+          message: `Failed to load event data: ${pollError.message}`,
         })
-        setLoading(false)
-      })
-
-      const intervalId = setInterval(() => {
-        fetchEventData(true).catch(console.error)
-      }, DATA_POLLING_INTERVAL)
-
-      // NOTE: 可见性感知 — 切回前台时立即刷新
-      const handleVisibility = () => {
-        if (document.visibilityState === "visible") {
-          fetchEventData(true).catch(console.error)
-        }
-      }
-      document.addEventListener("visibilitychange", handleVisibility)
-
-      return () => {
-        clearInterval(intervalId)
-        document.removeEventListener("visibilitychange", handleVisibility)
       }
     }
-  }, [fetchEventData, params])
+  }, [pollError])
 
-  if (!params?.sportCode || !params?.name || loading) {
+  if (!params?.sportCode || !params?.name || (loading && !eventFormat)) {
     return <LoadingOverlay />
   }
 
@@ -235,7 +188,7 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
         <div className={`text-lg ${error.type === "no_data" ? "text-gray-600" : "text-red-500"} mb-4`}>
           {error.message}
         </div>
-        {error.type === "other" && <Button onClick={() => fetchEventData()}>重试</Button>}
+        {error.type === "other" && <Button onClick={() => refresh()}>重试</Button>}
       </div>
     )
   }

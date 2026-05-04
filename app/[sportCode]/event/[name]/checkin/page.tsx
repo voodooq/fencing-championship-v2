@@ -1,12 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import LoadingOverlay from "@/components/loading"
-import { buildApiUrl } from "@/lib/sport-config"
-import { DATA_POLLING_INTERVAL } from "@/config/site"
+import { usePolling } from "@/hooks/use-polling"
 
 interface CheckInRecord {
   athleteName: string
@@ -31,76 +30,108 @@ interface CheckInPageProps {
 export default function CheckInPage({ params }: CheckInPageProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [checkInData, setCheckInData] = useState<CheckInRecord[]>([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
   const [event, setEvent] = useState<Event | null>(null)
 
-  // Note: previously this page accepted an optional `event` prop from parent; to satisfy Next.js page prop type checks
-  // and avoid build-time type errors, we no longer accept that prop directly. The page will resolve `event` by
-  // fetching sysData when needed inside `fetchData()`.
+  /**
+   * 获取检录数据
+   * 使用 batchFetch + ETag 减少带宽消耗
+   */
+  const fetchFn = useCallback(async (isPolling: boolean, etag?: string) => {
+    if (!params?.sportCode || !params?.name) return null
 
+    // 首次获取 event 信息
+    let currentEvent = event
+    if (!currentEvent) {
+      try {
+        const sysResponse = await fetch("/api/batchFetch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sportCode: params.sportCode,
+            requests: [{ key: "sysData", type: "sysData" }],
+          }),
+        })
+        if (sysResponse.ok) {
+          const sysRes = await sysResponse.json()
+          const sysDataArr = sysRes.data?.sysData || sysRes.sysData
+          const evt = sysDataArr?.[4]?.find(
+            (e: Event) => e.eventCode === decodeURIComponent(params.name),
+          )
+          if (evt) {
+            currentEvent = evt
+            setEvent(evt)
+          }
+        }
+      } catch (err) {
+        console.error(err)
+      }
+    }
 
-  const fetchData = async (isPolling = false) => {
-    if (!params?.sportCode || !params?.name) return
+    const requests = [
+      { key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) },
+      { key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) },
+    ]
+
+    const batchResponse = await fetch("/api/batchFetch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(etag ? { "if-none-match": etag } : {}),
+      },
+      body: JSON.stringify({
+        sportCode: params.sportCode,
+        requests: requests,
+      }),
+    })
+
+    if (!batchResponse.ok) {
+      throw new Error(`Batch fetch failed: ${batchResponse.status}`)
+    }
+
+    const result = await batchResponse.json()
+
+    // ETag 新格式处理
+    if (result && typeof result === "object" && "modified" in result) {
+      if (result.modified === false) {
+        return { modified: false }
+      }
+      // 附带 event 信息以便消费端处理
+      return {
+        modified: true,
+        data: { ...result.data, _event: currentEvent },
+        etag: result.etag,
+      }
+    }
+
+    return { ...result, _event: currentEvent }
+  }, [params, event])
+
+  const { data: pollingData, loading, error: pollError, refresh } = usePolling<Record<string, any>>({
+    fetchFn,
+    enabled: !!params?.sportCode && !!params?.name,
+    cacheKey: `checkin_${params.sportCode}_${params.name}`,
+  })
+
+  // 将轮询数据映射到组件状态
+  useEffect(() => {
+    if (!pollingData) return
 
     try {
-      if (!isPolling) setLoading(true)
-      setError(null)
-
-      let currentEvent = event
-      if (!currentEvent) {
-        try {
-          const sysResponse = await fetch("/api/batchFetch", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sportCode: params.sportCode, requests: [{ key: "sysData", type: "sysData" }] })
-          })
-          if (sysResponse.ok) {
-            const sysRes = await sysResponse.json()
-            const evt = sysRes.sysData?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
-            if (evt) { currentEvent = evt; setEvent(evt); }
-          }
-        } catch (err) { console.error(err) }
-      }
-
-      const requests = [
-        { key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) },
-        { key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) }
-      ]
-
-      // Fetch startList and startListTeam (sysData removed)
-      const batchResponse = await fetch("/api/batchFetch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          sportCode: params.sportCode,
-          requests: requests
-        }),
-      })
-
-      if (!batchResponse.ok) {
-        throw new Error(`Batch fetch failed: ${batchResponse.status}`)
-      }
-
-      const batchData = await batchResponse.json()
-
-      if (!currentEvent) {
-        if (!isPolling) setLoading(false)
-        return
-      }
+      const currentEvent = pollingData._event || event
+      if (!currentEvent) return
 
       const isTeamEvent = currentEvent.typeCode === "T"
 
-      let data;
+      let data
       if (isTeamEvent) {
-        data = batchData.startListTeam;
+        data = pollingData.startListTeam
       } else {
-        data = batchData.startList;
+        data = pollingData.startList
       }
 
       if (!data || data.error) {
-        throw new Error(`Failed to fetch check-in data: ${data?.status || 'Unknown error'}`)
+        throw new Error(`Failed to fetch check-in data: ${data?.status || "Unknown error"}`)
       }
 
       let checkInRecords: CheckInRecord[] = []
@@ -129,41 +160,33 @@ export default function CheckInPage({ params }: CheckInPageProps) {
         }
       }
       setCheckInData(checkInRecords)
-    } catch (error) {
-      console.error("Error fetching check-in data:", error)
-      if (error instanceof Error && error.message.includes("HTTP error! status: 500")) {
+      setError(null)
+    } catch (err) {
+      console.error("Error processing check-in data:", err)
+      if (err instanceof Error && err.message.includes("500")) {
         setError({ type: "no_data", message: "当前没有检录数据" })
       } else {
         setError({
           type: "other",
-          message: `Failed to load data: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+          message: `Failed to load data: ${err instanceof Error ? err.message : JSON.stringify(err)}`,
         })
       }
-    } finally {
-      if (!isPolling) setLoading(false)
     }
-  }
+  }, [pollingData, event])
 
+  // 错误状态映射
   useEffect(() => {
-    if (params?.sportCode && params?.name) {
-      fetchData()
-
-      const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
-
-      // NOTE: 可见性感知 — 切回前台时立即刷新
-      const handleVisibility = () => {
-        if (document.visibilityState === "visible") {
-          fetchData(true)
-        }
-      }
-      document.addEventListener("visibilitychange", handleVisibility)
-
-      return () => {
-        clearInterval(intervalId)
-        document.removeEventListener("visibilitychange", handleVisibility)
+    if (pollError) {
+      if (pollError.message?.includes("500")) {
+        setError({ type: "no_data", message: "当前没有检录数据" })
+      } else {
+        setError({
+          type: "other",
+          message: `Failed to load data: ${pollError.message}`,
+        })
       }
     }
-  }, [params])
+  }, [pollError])
 
   const filteredData = checkInData.filter(
     (record) =>
@@ -172,7 +195,7 @@ export default function CheckInPage({ params }: CheckInPageProps) {
       record.organization.toLowerCase().includes(searchQuery.toLowerCase()),
   )
 
-  if (!params?.sportCode || !params?.name || loading) {
+  if (!params?.sportCode || !params?.name || (loading && checkInData.length === 0)) {
     return <LoadingOverlay />
   }
 
@@ -182,7 +205,7 @@ export default function CheckInPage({ params }: CheckInPageProps) {
         <div className={`text-lg ${error.type === "no_data" ? "text-gray-600" : "text-red-500"} mb-4`}>
           {error.message}
         </div>
-        {error.type === "other" && <Button onClick={() => fetchData()}>重试</Button>}
+        {error.type === "other" && <Button onClick={() => refresh()}>重试</Button>}
       </div>
     )
   }

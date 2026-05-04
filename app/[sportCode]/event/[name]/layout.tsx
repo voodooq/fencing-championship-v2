@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { ChevronLeft, ChevronUp } from "lucide-react"
 import Link from "next/link"
 import { DATA_POLLING_INTERVAL } from "@/config/site"
@@ -70,6 +70,13 @@ export default function EventLayout({
   const [isModalOpen, setIsModalOpen] = useState(false)
   const isTestMode = useTestMode()
 
+  // NOTE: 指数退避相关 ref，数据无变化时逐步延长轮询间隔
+  const MAX_LAYOUT_INTERVAL = 60000
+  const lastDataStringRef = useRef<string>("")
+  const unchangedCountRef = useRef<number>(0)
+  const currentIntervalRef = useRef<number>(DATA_POLLING_INTERVAL)
+  const timerIdRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const topRowTabs = useMemo(
     () => [
       { id: "rounds", label: "比赛轮次" },
@@ -124,7 +131,16 @@ export default function EventLayout({
 
       load()
 
-      const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
+      // NOTE: 递归 setTimeout 替代 setInterval，实现动态间隔（指数退避）
+      const scheduleNext = () => {
+        timerIdRef.current = setTimeout(() => {
+          fetchData(true).finally(() => {
+            // 请求完成后再安排下一轮，避免请求堆积
+            scheduleNext()
+          })
+        }, currentIntervalRef.current)
+      }
+      scheduleNext()
 
       // NOTE: 可见性感知 — 切回前台时立即刷新，后台时浏览器自动节流
       const handleVisibility = () => {
@@ -135,7 +151,9 @@ export default function EventLayout({
       document.addEventListener("visibilitychange", handleVisibility)
 
       return () => {
-        clearInterval(intervalId)
+        if (timerIdRef.current) {
+          clearTimeout(timerIdRef.current)
+        }
         document.removeEventListener("visibilitychange", handleVisibility)
       }
     }
@@ -145,13 +163,12 @@ export default function EventLayout({
     setIsModalOpen(isOpen)
   }
 
-  const fetchData = async (isPolling = false) => {
+  const fetchData = useCallback(async (isPolling = false) => {
     if (!params?.sportCode || !params?.name) return
 
     try {
       if (!isPolling) setLoading(true)
       setError(null)
-      //console.log("Fetching data for sportCode:", params.sportCode)
 
       const response = await fetch(
         buildApiUrl("/api/getAllData", {}, params.sportCode),
@@ -183,8 +200,23 @@ export default function EventLayout({
 
       const data: AllData = await response.json()
 
-      //console.log("Fetched data:", data)
-      setAllData(data)
+      // NOTE: 数据变化检测 — 只有数据真正变化时才更新状态
+      const dataString = JSON.stringify(data)
+      if (dataString !== lastDataStringRef.current) {
+        lastDataStringRef.current = dataString
+        // 数据变化 → 重置退避，恢复初始间隔
+        unchangedCountRef.current = 0
+        currentIntervalRef.current = DATA_POLLING_INTERVAL
+        setAllData(data)
+      } else {
+        // 数据未变化 → 递增退避计数，延长下次轮询间隔
+        unchangedCountRef.current += 1
+        currentIntervalRef.current = Math.min(
+          DATA_POLLING_INTERVAL * Math.pow(2, unchangedCountRef.current),
+          MAX_LAYOUT_INTERVAL
+        )
+      }
+
       const currentEvent = data.sysData[4].find((e) => e.eventCode === decodeURIComponent(params.name))
       if (!currentEvent) {
         setError({
@@ -207,7 +239,7 @@ export default function EventLayout({
     } finally {
       if (!isPolling) setLoading(false)
     }
-  }
+  }, [params, router])
 
   if (!params?.sportCode || !params?.name || loading) {
     return <LoadingOverlay />

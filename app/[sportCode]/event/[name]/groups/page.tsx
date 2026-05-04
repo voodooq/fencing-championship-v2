@@ -1,13 +1,12 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { Search, ChevronDown } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import LoadingOverlay from "@/components/loading"
-import { buildApiUrl } from "@/lib/sport-config"
-import { DATA_POLLING_INTERVAL } from "@/config/site"
+import { usePolling } from "@/hooks/use-polling"
 
 interface PoolFencer {
   eventCode: string
@@ -89,81 +88,75 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
   const [view, setView] = useState<"results" | "rankings">("results")
   const [expandedPool, setExpandedPool] = useState<string | null>(null)
   const [poolData, setPoolData] = useState<PoolData | null>(null)
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
   const [sortedPools, setSortedPools] = useState<[string, PoolFencer[]][]>([])
   const [expandedRows, setExpandedRows] = useState<number[]>([])
   const [poolRankings, setPoolRankings] = useState<PoolRanking[]>([])
 
-  useEffect(() => {
-    if (params?.sportCode && params?.name) {
-      fetchData().catch((error) => {
-        console.error("Unhandled error in fetchData:", error)
-        setLoading(false)
-      })
+  /**
+   * 获取小组赛数据
+   * 使用 batchFetch + ETag 减少带宽消耗
+   */
+  const fetchFn = useCallback(async (isPolling: boolean, etag?: string) => {
+    if (!params?.sportCode || !params?.name) return null
 
-      const intervalId = setInterval(() => {
-        fetchData(true).catch((error) => {
-          console.error("Unhandled error in fetchData polling:", error)
-        })
-      }, DATA_POLLING_INTERVAL)
+    const batchResponse = await fetch("/api/batchFetch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(etag ? { "if-none-match": etag } : {}),
+      },
+      body: JSON.stringify({
+        sportCode: params.sportCode,
+        requests: [
+          { key: "poolResult", directory: "poolResult", eventCode: params.name },
+          { key: "poolRank", directory: "poolRank", eventCode: params.name },
+        ],
+      }),
+    })
 
-      // NOTE: 可见性感知 — 切回前台时立即刷新
-      const handleVisibility = () => {
-        if (document.visibilityState === "visible") {
-          fetchData(true).catch(console.error)
-        }
-      }
-      document.addEventListener("visibilitychange", handleVisibility)
-
-      return () => {
-        clearInterval(intervalId)
-        document.removeEventListener("visibilitychange", handleVisibility)
-      }
+    if (!batchResponse.ok) {
+      throw new Error(`Batch fetch failed: ${batchResponse.status}`)
     }
+
+    const result = await batchResponse.json()
+
+    // ETag 新格式处理
+    if (result && typeof result === "object" && "modified" in result) {
+      if (result.modified === false) {
+        return { modified: false }
+      }
+      return { modified: true, data: result.data, etag: result.etag }
+    }
+
+    return result
   }, [params])
 
-  const fetchData = async (isPolling = false) => {
-    if (!params?.sportCode || !params?.name) return
+  const { data: pollingData, loading, error: pollError, refresh } = usePolling<Record<string, any>>({
+    fetchFn,
+    enabled: !!params?.sportCode && !!params?.name,
+    cacheKey: `groups_${params.sportCode}_${params.name}`,
+  })
+
+  // 将轮询数据映射到组件状态
+  useEffect(() => {
+    if (!pollingData) return
 
     try {
-      if (!isPolling) setLoading(true)
-      setError(null)
-
-      const batchResponse = await fetch("/api/batchFetch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          sportCode: params.sportCode,
-          requests: [
-            { key: "poolResult", directory: "poolResult", eventCode: params.name },
-            { key: "poolRank", directory: "poolRank", eventCode: params.name },
-          ],
-        }),
-      })
-
-      if (!batchResponse.ok) {
-        throw new Error(`Batch fetch failed: ${batchResponse.status}`)
-      }
-
-      const batchData = await batchResponse.json()
-
       // Process poolResult
-      const resultData = batchData.poolResult
-      if (resultData.error) {
-        throw new Error(`Error fetching pool results: ${resultData.status || resultData.message}`)
+      const resultData = pollingData.poolResult
+      if (!resultData || resultData.error) {
+        throw new Error(`Error fetching pool results: ${resultData?.status || resultData?.message}`)
       }
       if (!Array.isArray(resultData) || resultData.length < 2) {
-        throw new Error(`Invalid data structure received: ${JSON.stringify(resultData)}`)
+        throw new Error(`Invalid data structure received`)
       }
 
       if (
         !Array.isArray(resultData[0]) ||
         resultData[0].some((fencer: any) => typeof fencer !== "object" || !("eventCode" in fencer))
       ) {
-        throw new Error(`Invalid fencers data structure received: ${JSON.stringify(resultData[0])}`)
+        throw new Error(`Invalid fencers data structure received`)
       }
       const fetchedPoolData = {
         fencers: resultData[0] as PoolFencer[],
@@ -172,9 +165,8 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
       setPoolData(fetchedPoolData)
 
       // Process poolRank
-      const rankData = batchData.poolRank
-      if (rankData.error) {
-        // Silently fail or log if rank data is missing, or throw if critical
+      const rankData = pollingData.poolRank
+      if (rankData?.error) {
         console.warn(`Error fetching pool rankings: ${rankData.status || rankData.message}`)
       }
       if (Array.isArray(rankData)) {
@@ -183,7 +175,7 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
         setPoolRankings([])
       }
 
-      // Group and sort fencers by pool
+      // 按小组名分组并排序
       const groupedFencers = fetchedPoolData.fencers.reduce(
         (acc, fencer) => {
           if (!acc[fencer.poolName]) {
@@ -199,20 +191,34 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
         Object.entries(groupedFencers).map(([poolName, fencers]) => [poolName, sortFencersByMatchOrder(fencers)]),
       )
       setSortedPools(sortedPoolsData)
-    } catch (error) {
-      console.error("Error fetching data:", error)
-      if (error instanceof Error && error.message.includes("HTTP error! status: 500")) {
+      setError(null)
+    } catch (err) {
+      console.error("Error processing groups data:", err)
+      if (err instanceof Error && err.message.includes("500")) {
         setError({ type: "no_data", message: "当前没有数据" })
       } else {
         setError({
           type: "other",
-          message: `Failed to load data: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+          message: `Failed to load data: ${err instanceof Error ? err.message : JSON.stringify(err)}`,
         })
       }
-    } finally {
-      if (!isPolling) setLoading(false)
     }
-  }
+  }, [pollingData])
+
+  // 错误状态映射
+  useEffect(() => {
+    if (pollError) {
+      if (pollError.message?.includes("500")) {
+        setError({ type: "no_data", message: "当前没有数据" })
+      } else {
+        setError({
+          type: "other",
+          message: `Failed to load data: ${pollError.message}`,
+        })
+      }
+    }
+  }, [pollError])
+
 
   const filteredPools = useMemo(() => {
     return sortedPools.filter(([poolName, fencers]) =>
@@ -228,7 +234,7 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
     setExpandedRows((prev) => (prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]))
   }
 
-  if (!params?.sportCode || !params?.name || loading) {
+  if (!params?.sportCode || !params?.name || (loading && sortedPools.length === 0)) {
     return <LoadingOverlay />
   }
 
@@ -238,7 +244,7 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
         <div className={`text-lg ${error.type === "no_data" ? "text-gray-600" : "text-red-500"} mb-4`}>
           {error.message}
         </div>
-        {error.type === "other" && <Button onClick={() => fetchData()}>重试</Button>}
+        {error.type === "other" && <Button onClick={() => refresh()}>重试</Button>}
       </div>
     )
   }
