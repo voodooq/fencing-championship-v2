@@ -149,7 +149,19 @@ export default function CheckInPage({ params }: CheckInPageProps) {
       fetchData()
 
       const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
-      return () => clearInterval(intervalId)
+
+      // NOTE: 可见性感知 — 切回前台时立即刷新
+      const handleVisibility = () => {
+        if (document.visibilityState === "visible") {
+          fetchData(true)
+        }
+      }
+      document.addEventListener("visibilitychange", handleVisibility)
+
+      return () => {
+        clearInterval(intervalId)
+        document.removeEventListener("visibilitychange", handleVisibility)
+      }
     }
   }, [params])
 

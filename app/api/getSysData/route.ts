@@ -1,12 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
-
-// This API uses request URL and remote resources; mark as dynamic
-export const dynamic = 'force-dynamic'
+import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
 
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
-
-import { DATA_REFRESH_INTERVAL } from "@/config/site"
 
 const validDirectories = [
   "dualPhase",
@@ -18,6 +14,56 @@ const validDirectories = [
   "startListTeam",
   "eventState",
 ]
+
+// NOTE: 内存缓存和请求合并，减少 OSS 回源
+const memoryCache: Record<string, { data: any; expiry: number }> = {}
+const inflightRequests: Record<string, Promise<any> | undefined> = {}
+
+async function fetchWithCache(url: string): Promise<any> {
+  const now = Date.now()
+  const cacheDuration = SERVER_CACHE_DURATION * 1000
+
+  if (memoryCache[url]) {
+    if (memoryCache[url].expiry > now) {
+      return memoryCache[url].data
+    } else {
+      // SWR: 返回旧数据，后台刷新
+      fetchFromOSS(url, cacheDuration).catch(err =>
+        console.error(`[getSysData SWR] Background refresh failed:`, err)
+      )
+      return memoryCache[url].data
+    }
+  }
+
+  return fetchFromOSS(url, cacheDuration)
+}
+
+async function fetchFromOSS(url: string, cacheDuration: number): Promise<any> {
+  if (inflightRequests[url] !== undefined) {
+    return inflightRequests[url]
+  }
+
+  const fetchPromise = (async () => {
+    try {
+      const response = await fetch(url, {
+        next: { revalidate: SERVER_CACHE_DURATION },
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`)
+      }
+
+      const data = await response.json()
+      memoryCache[url] = { data, expiry: Date.now() + cacheDuration }
+      return data
+    } finally {
+      delete inflightRequests[url]
+    }
+  })()
+
+  inflightRequests[url] = fetchPromise
+  return fetchPromise
+}
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url)
@@ -50,35 +96,32 @@ export async function GET(request: NextRequest) {
     dataUrl += `${eventCode}.txt`
   }
 
-  //console.log("Fetching data from:", dataUrl)
-
   try {
-    const response = await fetch(dataUrl, { next: { revalidate: DATA_REFRESH_INTERVAL } })
+    const data = await fetchWithCache(dataUrl)
 
-    if (!response.ok) {
-      console.error(`Failed to fetch ${dataUrl}: ${response.status} ${response.statusText}`)
-
-      if (response.status === 404) {
-        return NextResponse.json(
-          {
-            error: "DATA_NOT_FOUND",
-            message: "请求的数据不存在",
-            details: `无法找到 ${directory} 目录下的 ${eventCode} 数据`,
-            sportCode: sportCode,
-            directory: directory,
-            eventCode: eventCode,
-          },
-          { status: 404 },
-        )
-      }
-
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-
-    const data = await response.json()
-    return NextResponse.json(data)
+    // NOTE: Cache-Control 让 CDN 缓存响应，减少回源
+    return NextResponse.json(data, {
+      headers: {
+        "Cache-Control": `public, max-age=${SERVER_CACHE_DURATION}, s-maxage=${SERVER_CACHE_DURATION}, stale-while-revalidate=${CDN_STALE_REVALIDATE}`,
+      },
+    })
   } catch (error) {
     console.error("Error fetching data:", error)
+
+    if (error instanceof Error && error.message.includes("404")) {
+      return NextResponse.json(
+        {
+          error: "DATA_NOT_FOUND",
+          message: "请求的数据不存在",
+          details: `无法找到 ${directory} 目录下的 ${eventCode} 数据`,
+          sportCode: sportCode,
+          directory: directory,
+          eventCode: eventCode,
+        },
+        { status: 404 },
+      )
+    }
+
     return NextResponse.json(
       {
         error: "FETCH_ERROR",

@@ -73,7 +73,19 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
       fetchData()
 
       const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
-      return () => clearInterval(intervalId)
+
+      // NOTE: 可见性感知 — 切回前台时立即刷新，后台时浏览器自动节流
+      const handleVisibility = () => {
+        if (document.visibilityState === "visible") {
+          fetchData(true)
+        }
+      }
+      document.addEventListener("visibilitychange", handleVisibility)
+
+      return () => {
+        clearInterval(intervalId)
+        document.removeEventListener("visibilitychange", handleVisibility)
+      }
     }
   }, [params])
 

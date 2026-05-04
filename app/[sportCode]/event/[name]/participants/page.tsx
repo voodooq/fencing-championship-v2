@@ -80,7 +80,9 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
       })
       if (sysResponse.ok) {
         const sysRes = await sysResponse.json()
-        const evt = sysRes.data?.sysData?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
+        // NOTE: batchFetch 无 etag 时返回 { sysData: [...] }，有 etag 时返回 { data: { sysData: [...] } }
+        const sysDataArr = sysRes.data?.sysData || sysRes.sysData
+        const evt = sysDataArr?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
         if (evt) { currentEvent = evt; setEvent(evt); }
       }
     }
@@ -112,15 +114,33 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
     if (!currentEvent) return null
 
     const rawResult = isNewFormat ? batchRes.data : batchRes;
-    const participantsData = currentEvent.typeCode === "T" ? rawResult?.startListTeam : rawResult?.startList
     
-    if (!participantsData || participantsData.error) {
-      throw new Error(`Failed to fetch participants data: ${participantsData?.status || 'Unknown error'}`)
+    // 归一化处理：确保返回的是“数据集数组” (any[][])
+    const finalData: any[][] = [];
+    const addDataset = (data: any) => {
+      if (!data || data.error) return;
+      if (Array.isArray(data)) {
+        if (data.length > 0 && Array.isArray(data[0])) {
+          // 如果已经是二维数组（多 Sheet），打散放入
+          finalData.push(...data);
+        } else {
+          // 如果是单层数组，直接放入
+          finalData.push(data);
+        }
+      }
+    };
+
+    addDataset(rawResult?.startList);
+    addDataset(rawResult?.startListTeam);
+
+    if (finalData.length === 0) {
+      // 没有任何数据，抛出错误以便触发“暂无数据”提示
+      throw new Error("500: No participant data found");
     }
 
     return isNewFormat 
-      ? { modified: true, data: participantsData, etag: batchRes.etag }
-      : participantsData;
+      ? { modified: true, data: finalData, etag: batchRes.etag }
+      : finalData;
   }, [params, event])
 
   const { data: participantsData, loading, error: pollError, refresh } = usePolling({

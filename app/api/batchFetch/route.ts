@@ -4,7 +4,7 @@ import crypto from "crypto"
 // Get the base URL from environment variable
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
 
-import { DATA_REFRESH_INTERVAL } from "@/config/site"
+import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
 
 // Basic in-memory cache
 const memoryCache: Record<string, { data: any; expiry: number }> = {}
@@ -91,7 +91,8 @@ export async function POST(request: NextRequest) {
 
         const dynamicBaseUrl = `${BASE_URL}/${sportCode}`
         const results: Record<string, any> = {}
-        const cacheDuration = (DATA_REFRESH_INTERVAL || 15) * 1000
+        // NOTE: 使用服务端缓存时长，而非客户端轮询间隔，减少回源频率
+        const cacheDuration = SERVER_CACHE_DURATION * 1000
 
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 10000) // 10s timeout
@@ -162,16 +163,23 @@ export async function POST(request: NextRequest) {
         const serverEtag = crypto.createHash("md5").update(resultsString).digest("hex")
 
         // If client provided an etag and it matches, return "not modified"
+        // NOTE: Cache-Control 让 CDN 缓存此响应，减少回源
+        // s-maxage: CDN 缓存时长（10s 内直接返回）
+        // stale-while-revalidate: 过期后 CDN 仍可用旧数据 + 后台刷新（消除回源等待）
+        const cacheHeaders = {
+            "Cache-Control": `public, max-age=${SERVER_CACHE_DURATION}, s-maxage=${SERVER_CACHE_DURATION}, stale-while-revalidate=${CDN_STALE_REVALIDATE}`,
+        }
+
         if (clientEtag === serverEtag) {
-            return NextResponse.json({ modified: false, etag: serverEtag })
+            return NextResponse.json({ modified: false, etag: serverEtag }, { headers: cacheHeaders })
         }
 
         // BACKWARD COMPATIBILITY: If no etag was sent, return raw results
         if (!clientEtag) {
-            return NextResponse.json(results)
+            return NextResponse.json(results, { headers: cacheHeaders })
         }
 
-        return NextResponse.json({ modified: true, data: results, etag: serverEtag })
+        return NextResponse.json({ modified: true, data: results, etag: serverEtag }, { headers: cacheHeaders })
     } catch (error) {
         console.error("Error in batchFetch:", error)
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 })

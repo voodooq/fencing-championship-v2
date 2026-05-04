@@ -1,14 +1,66 @@
 import { NextResponse, type NextRequest } from "next/server"
-
-// This API relies on request URL query params and remote fetching, mark as dynamic
-export const dynamic = 'force-dynamic'
+import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
 
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
 
-import { DATA_REFRESH_INTERVAL } from "@/config/site"
-
 const dataFiles = [{ name: "sysData", url: "sysData.txt" }]
+
+// NOTE: 内存缓存，多个客户端共享同一份数据，避免每次请求都回源 OSS
+const memoryCache: Record<string, { data: any; expiry: number }> = {}
+// NOTE: 请求合并，相同 URL 的并发请求只发一次
+const inflightRequests: Record<string, Promise<any> | undefined> = {}
+
+/**
+ * 带内存缓存和请求合并的 OSS 数据获取
+ * 缓存有效期内直接返回，过期后返回旧数据并后台刷新（SWR 模式）
+ */
+async function fetchWithCache(url: string): Promise<any> {
+  const now = Date.now()
+  const cacheDuration = SERVER_CACHE_DURATION * 1000
+
+  // SWR: 缓存命中直接返回，过期则返回旧数据 + 后台刷新
+  if (memoryCache[url]) {
+    if (memoryCache[url].expiry > now) {
+      return memoryCache[url].data
+    } else {
+      // 过期但有旧数据 → 返回旧数据，后台刷新
+      fetchFromOSS(url, cacheDuration).catch(err =>
+        console.error(`[getAllData SWR] Background refresh failed for ${url}:`, err)
+      )
+      return memoryCache[url].data
+    }
+  }
+
+  return fetchFromOSS(url, cacheDuration)
+}
+
+async function fetchFromOSS(url: string, cacheDuration: number): Promise<any> {
+  // 请求合并：同一 URL 只发一次请求
+  if (inflightRequests[url] !== undefined) {
+    return inflightRequests[url]
+  }
+
+  const fetchPromise = (async () => {
+    try {
+      const response = await fetch(url, {
+        next: { revalidate: SERVER_CACHE_DURATION },
+      })
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`)
+      }
+      const text = await response.text()
+      const data = JSON.parse(text)
+      memoryCache[url] = { data, expiry: Date.now() + cacheDuration }
+      return data
+    } finally {
+      delete inflightRequests[url]
+    }
+  })()
+
+  inflightRequests[url] = fetchPromise
+  return fetchPromise
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,57 +73,47 @@ export async function GET(request: NextRequest) {
 
     // 构建完整的 URL - 现在完全动态，不验证 sportCode 是否在预定义列表中
     const dynamicBaseUrl = `${BASE_URL}/${sportCode}`
-    //console.log("Fetching data from:", dynamicBaseUrl)
 
     const allData: Record<string, any> = {}
 
     for (const file of dataFiles) {
       const fileUrl = `${dynamicBaseUrl}/${file.url}`
-      //console.log("Fetching file:", fileUrl)
 
       try {
-        const response = await fetch(fileUrl, {
-          next: { revalidate: DATA_REFRESH_INTERVAL }, // Revalidate every 15 seconds
-        })
+        const data = await fetchWithCache(fileUrl)
 
-        if (!response.ok) {
-          console.error(`Failed to fetch ${fileUrl}: ${response.status} ${response.statusText}`)
-
-          if (response.status === 404) {
-            return NextResponse.json(
-              {
-                error: "SPORT_CODE_NOT_FOUND",
-                message: `运动项目代码 "${sportCode}" 不存在`,
-                details: `无法找到项目数据，请检查项目代码是否正确。`,
-                sportCode: sportCode,
-                attemptedUrl: fileUrl,
-              },
-              { status: 404 },
-            )
-          }
-
-          throw new Error(`HTTP error! status: ${response.status} for file: ${file.name}. URL: ${fileUrl}`)
-        }
-
-        const text = await response.text()
-        try {
-          const data = JSON.parse(text)
-          allData[file.name] = data
-        } catch (parseError) {
-          console.error(`Error parsing JSON for ${file.name}:`, parseError)
-          console.error("Received text:", text.substring(0, 200) + "...")
+        // 处理 404 类错误（fetchWithCache 可能缓存了错误状态）
+        if (data && data.error && data.status === 404) {
           return NextResponse.json(
             {
-              error: "INVALID_DATA_FORMAT",
-              message: `项目 "${sportCode}" 的数据格式无效`,
-              details: `服务器返回的数据无法解析，请稍后重试。`,
+              error: "SPORT_CODE_NOT_FOUND",
+              message: `运动项目代码 "${sportCode}" 不存在`,
+              details: `无法找到项目数据，请检查项目代码是否正确。`,
               sportCode: sportCode,
+              attemptedUrl: fileUrl,
             },
-            { status: 500 },
+            { status: 404 },
           )
         }
+
+        allData[file.name] = data
       } catch (fetchError) {
-        console.error(`Network error fetching ${fileUrl}:`, fetchError)
+        console.error(`Error fetching ${fileUrl}:`, fetchError)
+
+        // 区分 404 和其他错误
+        if (fetchError instanceof Error && fetchError.message.includes("404")) {
+          return NextResponse.json(
+            {
+              error: "SPORT_CODE_NOT_FOUND",
+              message: `运动项目代码 "${sportCode}" 不存在`,
+              details: `无法找到项目数据，请检查项目代码是否正确。`,
+              sportCode: sportCode,
+              attemptedUrl: fileUrl,
+            },
+            { status: 404 },
+          )
+        }
+
         return NextResponse.json(
           {
             error: "NETWORK_ERROR",
@@ -96,8 +138,12 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // console.log("Successfully fetched data for sportCode:", sportCode)
-    return NextResponse.json(allData)
+    // NOTE: Cache-Control 让 CDN 和浏览器缓存此响应，大幅减少回源
+    return NextResponse.json(allData, {
+      headers: {
+        "Cache-Control": `public, max-age=${SERVER_CACHE_DURATION}, s-maxage=${SERVER_CACHE_DURATION}, stale-while-revalidate=${CDN_STALE_REVALIDATE}`,
+      },
+    })
   } catch (error) {
     console.error("Error fetching data:", error)
     return NextResponse.json(

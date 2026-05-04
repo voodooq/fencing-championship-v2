@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
 
-import { DATA_REFRESH_INTERVAL } from "@/config/site"
+import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url)
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     // 这期间无论有多少个请求，Next.js 都只会向 OSS 发起一次请求 (请求合并)
     const response = await fetch(imageUrl, {
       method: "GET",
-      next: { revalidate: DATA_REFRESH_INTERVAL },
+      next: { revalidate: SERVER_CACHE_DURATION },
     })
 
     // 4. 处理来自源服务器的响应
@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
     // public: 允许浏览器和 CDN 缓存
     // max-age: 浏览器缓存时间 (与配置一致)
     // stale-while-revalidate=5: 允许短暂使用过期数据，提升体验
-    headers.set("Cache-Control", `public, max-age=${DATA_REFRESH_INTERVAL}, stale-while-revalidate=5`)
+    headers.set("Cache-Control", `public, max-age=${SERVER_CACHE_DURATION}, s-maxage=${SERVER_CACHE_DURATION}, stale-while-revalidate=${CDN_STALE_REVALIDATE}`)
 
     // 6. 将图片数据流式传输给浏览器
     return new NextResponse(response.body, {

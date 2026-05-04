@@ -108,7 +108,18 @@ export default function GroupsPage({ params }: { params: { sportCode: string; na
         })
       }, DATA_POLLING_INTERVAL)
 
-      return () => clearInterval(intervalId)
+      // NOTE: 可见性感知 — 切回前台时立即刷新
+      const handleVisibility = () => {
+        if (document.visibilityState === "visible") {
+          fetchData(true).catch(console.error)
+        }
+      }
+      document.addEventListener("visibilitychange", handleVisibility)
+
+      return () => {
+        clearInterval(intervalId)
+        document.removeEventListener("visibilitychange", handleVisibility)
+      }
     }
   }, [params])
 

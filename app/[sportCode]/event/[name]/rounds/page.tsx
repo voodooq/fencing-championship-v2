@@ -210,7 +210,18 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
         fetchEventData(true).catch(console.error)
       }, DATA_POLLING_INTERVAL)
 
-      return () => clearInterval(intervalId)
+      // NOTE: 可见性感知 — 切回前台时立即刷新
+      const handleVisibility = () => {
+        if (document.visibilityState === "visible") {
+          fetchEventData(true).catch(console.error)
+        }
+      }
+      document.addEventListener("visibilitychange", handleVisibility)
+
+      return () => {
+        clearInterval(intervalId)
+        document.removeEventListener("visibilitychange", handleVisibility)
+      }
     }
   }, [fetchEventData, params])
 
