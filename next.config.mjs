@@ -8,6 +8,8 @@ try {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  // NOTE: 关闭 Node.js 层的 Gzip 压缩，由 CDN/Nginx 处理，降低容器 CPU 开销
+  compress: false,
   eslint: {
     ignoreDuringBuilds: true,
   },
