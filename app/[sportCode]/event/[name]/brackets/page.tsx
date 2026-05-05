@@ -4,6 +4,7 @@ import React from "react"
 
 import type { FC } from "react"
 import { useCallback, useEffect, useState, useMemo, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import { ChevronLeft, ChevronRight, Eye, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -860,6 +861,9 @@ interface BracketsPageProps {
 }
 
 const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
+  const searchParams = useSearchParams()
+  // NOTE: 从首页传入的目标阶段名称（如 "8表"、"决赛"）
+  const targetPhase = searchParams.get("phase")
   const [bracketData, setBracketData] = useState<BracketData[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
@@ -868,6 +872,8 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [targetMatchIndex, setTargetMatchIndex] = useState<number | null>(null)
   const [pendingPhaseChange, setPendingPhaseChange] = useState<number | null>(null)
+  // 标记是否已完成首次阶段定位，避免轮询时反复覆盖用户手动切换的阶段
+  const hasInitialPhaseSet = useRef(false)
 
   const matchRefs = useRef<(HTMLDivElement | null)[]>([])
 
@@ -922,12 +928,29 @@ const BracketsPage: FC<BracketsPageProps> = ({ params }) => {
     setLoading(pollingLoading); // Sync loading state
     if (fetchedBracketData && Array.isArray(fetchedBracketData)) {
       setBracketData(fetchedBracketData)
-      // Only set initial phase if not already set
-      if (currentPhaseId === 0 && fetchedBracketData[0]) {
-        setCurrentPhaseId(fetchedBracketData[0].phaseId)
+
+      // 首次加载时根据 URL 的 phase 参数定位到对应阶段
+      if (!hasInitialPhaseSet.current && fetchedBracketData.length > 0) {
+        hasInitialPhaseSet.current = true
+
+        if (targetPhase) {
+          // 根据 phaseName 匹配目标阶段（如 "8表" 匹配 phaseName 为 "8表" 的阶段）
+          const matchedPhase = fetchedBracketData.find(
+            (phase) => phase.phaseName === targetPhase
+          )
+          if (matchedPhase) {
+            setCurrentPhaseId(matchedPhase.phaseId)
+            return
+          }
+        }
+
+        // 无匹配或无参数时，默认选第一个阶段
+        if (fetchedBracketData[0]) {
+          setCurrentPhaseId(fetchedBracketData[0].phaseId)
+        }
       }
     }
-  }, [fetchedBracketData, currentPhaseId, pollingLoading])
+  }, [fetchedBracketData, pollingLoading, targetPhase])
 
   // Map pollError
   useEffect(() => {
