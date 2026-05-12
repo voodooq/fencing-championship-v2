@@ -10,6 +10,7 @@ import { isValidSportCode } from "../../config/sports"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { usePolling } from "@/hooks/use-polling"
+import { HOME_POLLING_INTERVAL } from "@/config/site"
 
 interface Event {
   eventId: number
@@ -119,6 +120,7 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
 
   const { data: pollingData, loading, refresh } = usePolling<Record<string, any>>({
     fetchFn,
+    interval: HOME_POLLING_INTERVAL,
     enabled: !!params?.sportCode,
     cacheKey: `home_${params.sportCode}`,
   })

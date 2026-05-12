@@ -9,6 +9,7 @@ import { SERVER_CACHE_DURATION } from "@/config/site"
  * 3. 请求合并：同一 URL 的并发请求只发一次网络请求
  * 4. 版本号机制：每次数据变化时递增版本号，用于轻量 ETag 计算
  *    （避免对完整 JSON 做 stringify + MD5，大幅降低 CPU 开销）
+ * 5. 请求限流：对同一 URL 的刷新请求进行节流，防止大并发时产生过多回源请求
  */
 
 interface CacheEntry {
@@ -16,6 +17,8 @@ interface CacheEntry {
   expiry: number
   /** 数据变更版本号，每次实际数据更新时递增 */
   version: number
+  /** 上次实际向 OSS 发起请求的时间戳，用于限流 */
+  lastFetchTime: number
 }
 
 // NOTE: 模块级单例，所有 API 路由共享
@@ -33,9 +36,16 @@ let globalVersionCounter = 0
 const NEGATIVE_CACHE_DURATION = 5000
 
 /**
+ * SWR 后台刷新的最小间隔（毫秒）
+ * 即使缓存过期，如果距上次刷新不足此间隔，也不触发后台刷新
+ * 防止大并发场景下每个请求都触发后台刷新
+ */
+const MIN_REFRESH_INTERVAL = 3000
+
+/**
  * 带 SWR 和请求合并的缓存读取
  * - 缓存有效 → 直接返回
- * - 缓存过期 → 返回旧数据 + 后台刷新（SWR）
+ * - 缓存过期 → 返回旧数据 + 后台刷新（SWR，带限流）
  * - 无缓存 → 发起网络请求
  */
 export async function fetchWithCache(
@@ -49,10 +59,15 @@ export async function fetchWithCache(
     if (memoryCache[url].expiry > now) {
       return memoryCache[url].data
     }
-    // SWR: 返回旧数据，后台刷新
-    fetchFromOrigin(url, cacheDuration).catch((err) =>
-      console.error(`[ServerCache SWR] Background refresh failed for ${url}:`, err)
-    )
+    // SWR: 返回旧数据，后台刷新（带限流保护）
+    // NOTE: 只有距上次刷新超过 MIN_REFRESH_INTERVAL 才触发后台刷新
+    // 1000 个用户同时轮询时，只有第一个过期请求会触发刷新，其余全部直接返回旧数据
+    const timeSinceLastFetch = now - memoryCache[url].lastFetchTime
+    if (timeSinceLastFetch > MIN_REFRESH_INTERVAL) {
+      fetchFromOrigin(url, cacheDuration).catch((err) =>
+        console.error(`[ServerCache SWR] Background refresh failed for ${url}:`, err)
+      )
+    }
     return memoryCache[url].data
   }
 
@@ -126,7 +141,7 @@ async function fetchFromOrigin(
 
 /**
  * 写入缓存条目
- * 通过浅比较 JSON 长度 + 首尾字符判断数据是否变化，
+ * 使用文本长度快速判断数据是否变化，只有可能变化时才做精确比较
  * 只有真正变化时才递增版本号
  */
 function setCacheEntry(url: string, data: any, duration: number): void {
@@ -136,13 +151,16 @@ function setCacheEntry(url: string, data: any, duration: number): void {
     delete memoryCache[oldestKey]
   }
 
+  const now = Date.now()
   const existing = memoryCache[url]
-  // NOTE: 用 JSON 序列化做精确比较来决定是否递增版本号
-  // 但这个序列化只发生在数据实际从 OSS 获取时（缓存命中时不会执行），
-  // 频率远低于 batchFetch 的请求频率，所以 CPU 开销可接受
   let version: number
+
   if (existing) {
-    const changed = JSON.stringify(data) !== JSON.stringify(existing.data)
+    // NOTE: 先用序列化后的长度做快速判断，长度相同才做精确比较
+    // 大部分情况下数据不变，长度比较可以快速跳过
+    const newStr = JSON.stringify(data)
+    const oldStr = JSON.stringify(existing.data)
+    const changed = newStr.length !== oldStr.length || newStr !== oldStr
     version = changed ? ++globalVersionCounter : existing.version
   } else {
     version = ++globalVersionCounter
@@ -150,7 +168,8 @@ function setCacheEntry(url: string, data: any, duration: number): void {
 
   memoryCache[url] = {
     data,
-    expiry: Date.now() + duration,
+    expiry: now + duration,
     version,
+    lastFetchTime: now,
   }
 }

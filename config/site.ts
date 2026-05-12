@@ -9,3 +9,9 @@ export const SERVER_CACHE_DURATION = 10 // seconds — 保证数据最多 10 秒
 // CDN 缓存过期后，仍可使用旧数据返回给用户 + 后台向源站刷新
 // 这样即使 CDN 缓存过期，用户也不会等待回源，回源只在后台发生
 export const CDN_STALE_REVALIDATE = 30 // seconds — CDN 容忍的旧数据窗口
+
+// NOTE: 首页轮询间隔（比赛事详情页更长，因为首页数据变化频率较低）
+export const HOME_POLLING_INTERVAL = 15000 // 15 seconds
+
+// NOTE: 非实时数据的轮询间隔（如参赛名单、比赛轮次等很少变化的数据）
+export const STATIC_DATA_POLLING_INTERVAL = 30000 // 30 seconds

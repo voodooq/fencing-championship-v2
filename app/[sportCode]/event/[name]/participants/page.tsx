@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
 import { usePolling } from "@/hooks/use-polling"
+import { STATIC_DATA_POLLING_INTERVAL } from "@/config/site"
 import { useEventData } from "@/contexts/event-data-context"
 
 interface Athlete {
@@ -134,6 +135,8 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
 
   const { data: participantsData, loading, error: pollError, refresh } = usePolling({
     fetchFn,
+    // NOTE: 参赛名单极少变化，使用 30 秒轮询间隔减少请求
+    interval: STATIC_DATA_POLLING_INTERVAL,
     enabled: !!params?.sportCode && !!params?.name,
     cacheKey: `participants_${params.sportCode}_${params.name}`
   })

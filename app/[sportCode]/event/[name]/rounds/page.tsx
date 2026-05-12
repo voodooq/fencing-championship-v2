@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
 import { usePolling } from "@/hooks/use-polling"
+import { STATIC_DATA_POLLING_INTERVAL } from "@/config/site"
 import { useEventData } from "@/contexts/event-data-context"
 
 interface EventFormat {
@@ -92,6 +93,8 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
 
   const { data: pollingData, loading, error: pollError, refresh } = usePolling<Record<string, any>>({
     fetchFn,
+    // NOTE: 赛制信息极少变化，使用 30 秒轮询间隔减少请求
+    interval: STATIC_DATA_POLLING_INTERVAL,
     // NOTE: 只有 Context 中有事件数据时才开始轮询
     enabled: !!params?.sportCode && !!params?.name && !!contextEvent,
     cacheKey: `rounds_${params.sportCode}_${params.name}`,

@@ -1,33 +1,40 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import Image from "next/image"
-import { buildApiUrl } from "../lib/sport-config"
 
 interface BannerProps {
   sportCode?: string
 }
 
+/**
+ * 赛事横幅图片组件
+ *
+ * 优化设计：
+ * - 直接使用 OSS URL 加载图片，通过 getBanner API 代理
+ * - 移除了之前每 5 秒刷新的 setInterval（Banner 图片极少变化，无需频繁刷新）
+ * - 加载失败时显示 CSS 渐变占位图，不再发额外请求
+ * - 图片自带浏览器缓存（getBanner API 返回 Cache-Control 头）
+ */
 export default function Banner({ sportCode }: BannerProps) {
-  const [timestamp, setTimestamp] = useState(Date.now())
+  const [hasError, setHasError] = useState(false)
 
-  useEffect(() => {
-    if (!sportCode) return
+  if (!sportCode) return null
 
-    const intervalId = setInterval(() => {
-      // 这里的更新是"静默"的，因为 Image 组件在 src 改变时会自动处理
-      // 实际上对于 Image 组件，改变 src 可能会导致短暂闪烁
-      // 但由于 Next.js Image 的优化，如果新旧图片相同，通常感知不强
-      // 或者我们可以依赖 Next.js 的缓存机制，这里主要为了触发重新请求
-      setTimestamp(Date.now())
-    }, 5000)
+  // NOTE: 不再附加 timestamp 参数，让浏览器和 CDN 正常缓存
+  const bannerUrl = `/api/getBanner?sportCode=${sportCode}`
 
-    return () => clearInterval(intervalId)
-  }, [sportCode])
-
-  const bannerUrl = sportCode
-    ? buildApiUrl("/api/getBanner", { timestamp: timestamp.toString() }, sportCode)
-    : "/placeholder.svg"
+  if (hasError) {
+    // 加载失败时显示 CSS 占位图，不再请求 SVG
+    return (
+      <div className="relative w-full aspect-[2/1] bg-gradient-to-r from-blue-500 to-blue-700 flex items-center justify-center">
+        <div className="text-white text-center">
+          <div className="text-2xl font-bold">{sportCode}</div>
+          <div className="text-sm mt-1 opacity-80">运动项目横幅</div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="relative w-full aspect-[2/1] bg-blue-600">
@@ -37,7 +44,8 @@ export default function Banner({ sportCode }: BannerProps) {
         fill
         className="object-cover"
         priority
-        unoptimized // 保持 unoptimized 以确保直接使用 API URL
+        unoptimized
+        onError={() => setHasError(true)}
       />
     </div>
   )
