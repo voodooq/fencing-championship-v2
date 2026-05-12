@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
 import { usePolling } from "@/hooks/use-polling"
+import { STATIC_DATA_POLLING_INTERVAL } from "@/config/site"
 
 interface Athlete {
   rank: number
@@ -65,6 +66,8 @@ export default function RankingsPage({ params }: { params: { sportCode: string; 
 
   const { data: pollingData, loading, error: pollError, refresh } = usePolling<Record<string, any>>({
     fetchFn,
+    // NOTE: 排名数据变化频率低，使用 30 秒轮询间隔
+    interval: STATIC_DATA_POLLING_INTERVAL,
     enabled: !!params?.sportCode && !!params?.name,
     cacheKey: `rankings_${params.sportCode}_${params.name}`,
   })

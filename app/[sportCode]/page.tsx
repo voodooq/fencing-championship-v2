@@ -277,12 +277,12 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
             setSelectedWeapon={setSelectedWeapon}
           />
         ) : (
-          <LoadingOverlay />
+          <LoadingOverlay inline />
         )}
         {allData ? (
           <Schedule events={filteredEvents} evnetstate={allData.sysData[5]} sportCode={params.sportCode} />
         ) : (
-          <LoadingOverlay />
+          <LoadingOverlay inline />
         )}
       </div>
     </div>

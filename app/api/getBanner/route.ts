@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
     // 这期间无论有多少个请求，Next.js 都只会向 OSS 发起一次请求 (请求合并)
     const response = await fetch(imageUrl, {
       method: "GET",
-      next: { revalidate: SERVER_CACHE_DURATION },
+      next: { revalidate: BANNER_CACHE_DURATION },
     })
 
     // 4. 处理来自源服务器的响应
@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
     // public: 允许浏览器和 CDN 缓存
     // max-age: 浏览器缓存时间 (与配置一致)
     // stale-while-revalidate=5: 允许短暂使用过期数据，提升体验
-    headers.set("Cache-Control", `public, max-age=${SERVER_CACHE_DURATION}, s-maxage=${SERVER_CACHE_DURATION}, stale-while-revalidate=${CDN_STALE_REVALIDATE}`)
+    headers.set("Cache-Control", `public, max-age=${BANNER_CACHE_DURATION}, s-maxage=${BANNER_CACHE_DURATION}, stale-while-revalidate=${CDN_STALE_REVALIDATE}`)
 
     // 6. 将图片数据流式传输给浏览器
     return new NextResponse(response.body, {

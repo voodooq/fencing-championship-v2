@@ -1,3 +1,4 @@
+import React, { useMemo } from "react"
 import Link from "next/link"
 import { buildSportPath } from "../lib/sport-config"
 
@@ -62,29 +63,37 @@ function getTargetPage(statusDes: string): string {
   return "rounds"
 }
 
-export default function Schedule({ events, evnetstate = [], sportCode }: ScheduleProps) {
+/**
+ * 赛程列表组件
+ * NOTE: 使用 React.memo 避免父组件（首页）筛选条件变化但 events 不变时的不必要重渲染
+ */
+const Schedule = React.memo(function Schedule({ events, evnetstate = [], sportCode }: ScheduleProps) {
+  // NOTE: 预计算 eventState 查找表，避免每个事件行都做 Array.find
+  const eventStateMap = useMemo(() => {
+    const map = new Map<number, EventState>()
+    evnetstate.forEach((state) => map.set(state.EventID, state))
+    return map
+  }, [evnetstate])
+
+  // NOTE: 预计算分组数据，避免每次渲染都重新分组
+  const groupedEvents = useMemo(() => {
+    const groups: Record<string, Event[]> = {}
+    events.forEach((event) => {
+      if (!groups[event.formattedDate]) {
+        groups[event.formattedDate] = []
+      }
+      groups[event.formattedDate].push(event)
+    })
+    return Object.entries(groups)
+  }, [events])
+
   if (events.length === 0) {
     return <div className="flex-1 overflow-auto px-4 py-8 text-center text-gray-500">没有符合筛选条件的赛事</div>
   }
 
-  const groupedEvents = events.reduce(
-    (acc, event) => {
-      if (!acc[event.formattedDate]) {
-        acc[event.formattedDate] = []
-      }
-      acc[event.formattedDate].push(event)
-      return acc
-    },
-    {} as Record<string, Event[]>,
-  )
-
-  const getEventState = (eventId: number) => {
-    return evnetstate?.find((state) => state.EventID === eventId)
-  }
-
   return (
     <div className="flex-1 overflow-auto px-4">
-      {Object.entries(groupedEvents).map(([date, dayEvents]) => (
+      {groupedEvents.map(([date, dayEvents]) => (
         <div key={date} className="mb-4 border rounded-lg overflow-hidden">
           <div className="px-3 py-2 bg-white border-b">
             <h2 className="text-gray-700 text-sm">{date}</h2>
@@ -96,7 +105,7 @@ export default function Schedule({ events, evnetstate = [], sportCode }: Schedul
               <div className="text-right">状态</div>
             </div>
             {dayEvents.map((event) => {
-              const state = getEventState(event.eventId)
+              const state = eventStateMap.get(event.eventId)
               const statusDes = state?.StatusDes || ""
               const targetPage = getTargetPage(statusDes)
               // NOTE: brackets 页面需要知道当前阶段以自动定位
@@ -122,5 +131,6 @@ export default function Schedule({ events, evnetstate = [], sportCode }: Schedul
       ))}
     </div>
   )
-}
+})
 
+export default Schedule
