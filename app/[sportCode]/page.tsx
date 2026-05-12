@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { usePolling } from "@/hooks/use-polling"
 import { HOME_POLLING_INTERVAL } from "@/config/site"
+import { safeArray } from "@/lib/safe-data"
 
 interface Event {
   eventId: number
@@ -128,16 +129,15 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
   // 从轮询数据中提取 allData
   const allData = useMemo<AllData | null>(() => {
     if (!pollingData?.sysData) return null
-    if (!Array.isArray(pollingData.sysData) || pollingData.sysData.length < 6) return null
+    // NOTE: 放宽到 5 个元素即可（有些项目 sysData 没有 eventState）
+    if (!Array.isArray(pollingData.sysData) || pollingData.sysData.length < 5) return null
 
-    // 获取 eventState（优先从单独请求的 eventState 获取，回退到 sysData[5]）
-    // NOTE: eventState 请求可能返回错误对象 {error: true}（truthy），
-    // 不能用 || 短路，必须逐个判断是否是数组
-    const eventStates = Array.isArray(pollingData.eventState)
-      ? pollingData.eventState
-      : Array.isArray(pollingData.sysData[5])
-        ? pollingData.sysData[5]
-        : []
+    // 统一提取 eventState，按优先级尝试多个数据源
+    // safeArray 会跳过错误对象 {error: true}，只返回真正的数组
+    const eventStates = safeArray(
+      pollingData.eventState,   // 优先：独立请求的 eventState
+      pollingData.sysData[5],   // 回退：sysData 中可能包含的 eventState
+    )
 
     // Process the data to include statusDes
     return {
