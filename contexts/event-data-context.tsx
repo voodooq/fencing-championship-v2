@@ -118,7 +118,12 @@ export function EventDataProvider({ sportCode, eventName, children }: EventDataP
     const eventList = sysData[4] as Event[]
     const decodedName = decodeURIComponent(eventName)
     const currentEvent = eventList?.find((e) => e.eventCode === decodedName) || null
-    const eventStates: EventState[] = pollingData.eventState || sysData[5] || []
+    // NOTE: eventState 请求可能返回错误对象 {error: true}（truthy），不能用 || 短路
+    const eventStates: EventState[] = Array.isArray(pollingData.eventState)
+      ? pollingData.eventState
+      : Array.isArray(sysData[5])
+        ? sysData[5]
+        : []
 
     return {
       sysData,

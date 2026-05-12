@@ -36,24 +36,34 @@ export function usePolling<T>({
     enabled = true,
     cacheKey,
 }: UsePollingOptions<T>) {
-    // 尝试从缓存初始化数据
-    const [data, setData] = useState<T | null>(() => {
-        if (typeof window !== "undefined" && cacheKey) {
+    // NOTE: 始终以 null 初始化，确保 SSR 和 hydration 阶段渲染一致
+    // sessionStorage 读取推迟到 useEffect（客户端挂载后），避免 hydration mismatch
+    const [data, setData] = useState<T | null>(null)
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<any>(null)
+
+    // NOTE: 通过 Ref 引用 data，避免闭包循环，在 useEffect 之前声明
+    const dataRef = useRef<T | null>(data)
+    dataRef.current = data
+
+    // 客户端挂载后从 sessionStorage 恢复缓存数据（秒开）
+    useEffect(() => {
+        if (cacheKey) {
             const cached = sessionStorage.getItem(`cache_poll_${cacheKey}`)
             if (cached) {
                 try {
-                    return JSON.parse(cached)
+                    const parsed = JSON.parse(cached)
+                    setData(parsed)
+                    dataRef.current = parsed
+                    setLoading(false)
                 } catch (e) {
-                    return null
+                    // 缓存数据损坏，忽略
                 }
             }
         }
-        return null
-    })
-
-    // 如果已经有缓存数据，初始 loading 设为 false，实现秒开
-    const [loading, setLoading] = useState(!data)
-    const [error, setError] = useState<any>(null)
+        // NOTE: 只在挂载时执行一次
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     const etagRef = useRef<string>("")
     const isInitialFetchRef = useRef<boolean>(true)
@@ -71,9 +81,6 @@ export function usePolling<T>({
     // NOTE: 通过 Ref 引用 fetchFn，避免 executeFetch 依赖 fetchFn 导致轮询链重建
     const fetchFnRef = useRef(fetchFn)
     fetchFnRef.current = fetchFn
-    // NOTE: 通过 Ref 引用 data，避免 updateData 依赖 data 状态导致闭包循环
-    const dataRef = useRef<T | null>(data)
-    dataRef.current = data
     // NOTE: 通过 Ref 引用 interval 和 cacheKey，避免依赖变化
     const intervalRef = useRef(interval)
     intervalRef.current = interval

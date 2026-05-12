@@ -131,7 +131,13 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
     if (!Array.isArray(pollingData.sysData) || pollingData.sysData.length < 6) return null
 
     // 获取 eventState（优先从单独请求的 eventState 获取，回退到 sysData[5]）
-    const eventStates = pollingData.eventState || pollingData.sysData[5] || []
+    // NOTE: eventState 请求可能返回错误对象 {error: true}（truthy），
+    // 不能用 || 短路，必须逐个判断是否是数组
+    const eventStates = Array.isArray(pollingData.eventState)
+      ? pollingData.eventState
+      : Array.isArray(pollingData.sysData[5])
+        ? pollingData.sysData[5]
+        : []
 
     // Process the data to include statusDes
     return {
