@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useCallback, useMemo } from "react"
 import { usePolling } from "@/hooks/use-polling"
+import { safeArray } from "@/lib/safe-data"
 
 interface Event {
   eventId: number
@@ -118,12 +119,11 @@ export function EventDataProvider({ sportCode, eventName, children }: EventDataP
     const eventList = sysData[4] as Event[]
     const decodedName = decodeURIComponent(eventName)
     const currentEvent = eventList?.find((e) => e.eventCode === decodedName) || null
-    // NOTE: eventState 请求可能返回错误对象 {error: true}（truthy），不能用 || 短路
-    const eventStates: EventState[] = Array.isArray(pollingData.eventState)
-      ? pollingData.eventState
-      : Array.isArray(sysData[5])
-        ? sysData[5]
-        : []
+    // 统一提取 eventState，safeArray 跳过错误对象，只返回真正的数组
+    const eventStates: EventState[] = safeArray(
+      pollingData.eventState,  // 优先：独立请求的 eventState
+      sysData[5],              // 回退：sysData 中可能包含的 eventState
+    )
 
     return {
       sysData,
