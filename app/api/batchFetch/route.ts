@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { fetchWithCache, getCacheVersion, computeEtag } from "@/lib/server-cache"
 import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
+import { isValidSportCode } from "@/config/sports"
 
 // Get the base URL from environment variable
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
@@ -11,8 +12,8 @@ export async function POST(request: NextRequest) {
         const { sportCode, requests } = body
         const clientEtag = request.headers.get("if-none-match")
 
-        if (!sportCode || !Array.isArray(requests)) {
-            return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
+        if (!sportCode || !isValidSportCode(sportCode) || !Array.isArray(requests)) {
+            return NextResponse.json({ error: "Invalid request body or sportCode" }, { status: 400 })
         }
 
         const dynamicBaseUrl = `${BASE_URL}/${sportCode}`
@@ -31,6 +32,20 @@ export async function POST(request: NextRequest) {
                 requests.map(async (req: any) => {
                     const { key, type, directory, eventCode, phaseId } = req
                     let url = ""
+
+                    // Validate parameters to prevent SSRF and Path Traversal
+                    if (eventCode && !/^[a-zA-Z0-9_-]+$/.test(eventCode)) {
+                        results[key] = { error: true, message: "Invalid eventCode" }
+                        return
+                    }
+                    if (phaseId && !/^[a-zA-Z0-9_-]+$/.test(phaseId)) {
+                        results[key] = { error: true, message: "Invalid phaseId" }
+                        return
+                    }
+                    if (directory && !/^[a-zA-Z0-9_-]+$/.test(directory)) {
+                         results[key] = { error: true, message: "Invalid directory" }
+                         return
+                    }
 
                     // Special handling for fullBracket composite request
                     if (type === "fullBracket") {

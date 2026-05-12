@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
 import { fetchWithCache } from "@/lib/server-cache"
+import { isValidSportCode } from "@/config/sports"
 
 // Get the base URL from environment variable
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
@@ -10,8 +11,8 @@ export async function GET(request: NextRequest) {
     const eventCode = url.searchParams.get("eventCode")
     const sportCode = url.searchParams.get("sportCode")
 
-    if (!eventCode || !sportCode) {
-        return NextResponse.json({ error: "Missing required parameters: eventCode and sportCode" }, { status: 400 })
+    if (!eventCode || !sportCode || !isValidSportCode(sportCode) || !/^[a-zA-Z0-9_-]+$/.test(eventCode)) {
+        return NextResponse.json({ error: "Missing or invalid required parameters" }, { status: 400 })
     }
 
     const dynamicBaseUrl = `${BASE_URL}/${sportCode}`

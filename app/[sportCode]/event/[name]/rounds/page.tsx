@@ -188,15 +188,13 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
             <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
               <div className="bg-blue-500 text-white px-4 py-2">{eventFormat.FormatPool}</div>
               <div className="p-4 space-y-2">
-                <div
-                  dangerouslySetInnerHTML={{
-                    __html: eventFormat.FormatPoolDesc
-                      ? eventFormat.FormatPoolDesc.split(/[;；]/)
-                        .map((part) => `<p>${part.trim()}</p>`)
-                        .join("")
-                      : "No description available",
-                  }}
-                />
+                <div className="space-y-1 text-gray-700">
+                  {eventFormat.FormatPoolDesc
+                    ? eventFormat.FormatPoolDesc.split(/[;；]/).map((part, index) => (
+                        part.trim() ? <p key={index}>{part.trim()}</p> : null
+                      ))
+                    : <p>No description available</p>}
+                </div>
               </div>
             </div>
           )}
@@ -204,15 +202,13 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
             <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
               <div className="bg-blue-500 text-white px-4 py-2">{eventFormat.FormatElimination}</div>
               <div className="p-4 space-y-2">
-                <div
-                  dangerouslySetInnerHTML={{
-                    __html: eventFormat.FormatEliDesc
-                      ? eventFormat.FormatEliDesc.split(/[;；]/)
-                        .map((part) => `<p>${part.trim()}</p>`)
-                        .join("")
-                      : "No description available",
-                  }}
-                />
+                <div className="space-y-1 text-gray-700">
+                  {eventFormat.FormatEliDesc
+                    ? eventFormat.FormatEliDesc.split(/[;；]/).map((part, index) => (
+                        part.trim() ? <p key={index}>{part.trim()}</p> : null
+                      ))
+                    : <p>No description available</p>}
+                </div>
               </div>
             </div>
           )}

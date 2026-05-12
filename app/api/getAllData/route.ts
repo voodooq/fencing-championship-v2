@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
 import { fetchWithCache } from "@/lib/server-cache"
+import { isValidSportCode } from "@/config/sports"
 
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
@@ -12,8 +13,8 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url)
     const sportCode = url.searchParams.get("sportCode")
 
-    if (!sportCode) {
-      return NextResponse.json({ error: "Missing required parameter: sportCode" }, { status: 400 })
+    if (!sportCode || !isValidSportCode(sportCode)) {
+      return NextResponse.json({ error: "Missing or invalid required parameter: sportCode" }, { status: 400 })
     }
 
     // 构建完整的 URL - 现在完全动态，不验证 sportCode 是否在预定义列表中

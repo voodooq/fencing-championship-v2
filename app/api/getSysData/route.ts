@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
 import { fetchWithCache } from "@/lib/server-cache"
+import { isValidSportCode } from "@/config/sports"
 
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
@@ -23,12 +24,16 @@ export async function GET(request: NextRequest) {
   const phaseId = url.searchParams.get("phaseId")
   const sportCode = url.searchParams.get("sportCode")
 
-  if (!eventCode || !directory) {
-    return NextResponse.json({ error: "Missing required parameters: eventCode and directory" }, { status: 400 })
+  if (!eventCode || !directory || !/^[a-zA-Z0-9_-]+$/.test(eventCode)) {
+    return NextResponse.json({ error: "Missing or invalid required parameters: eventCode and directory" }, { status: 400 })
   }
 
-  if (!sportCode) {
-    return NextResponse.json({ error: "Missing required parameter: sportCode" }, { status: 400 })
+  if (phaseId && !/^[a-zA-Z0-9_-]+$/.test(phaseId)) {
+    return NextResponse.json({ error: "Invalid phaseId" }, { status: 400 })
+  }
+
+  if (!sportCode || !isValidSportCode(sportCode)) {
+    return NextResponse.json({ error: "Missing or invalid required parameter: sportCode" }, { status: 400 })
   }
 
   if (!validDirectories.includes(directory)) {
