@@ -7,8 +7,8 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
-import { buildApiUrl } from "@/lib/sport-config"
-import { DATA_POLLING_INTERVAL } from "@/config/site"
+import { usePolling } from "@/hooks/use-polling"
+import { useEventData } from "@/contexts/event-data-context"
 
 interface Athlete {
   eventId: number
@@ -54,8 +54,6 @@ interface Event {
   typeCode: string
 }
 
-import { usePolling } from "@/hooks/use-polling"
-
 interface ParticipantsPageProps {
   params: { sportCode: string; name: string }
 }
@@ -67,26 +65,19 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
   const [teams, setTeams] = useState<Team[]>([])
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [referees, setReferees] = useState<Referee[]>([])
-  const [event, setEvent] = useState<Event | null>(null)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
+
+  // NOTE: 从 Context 获取事件数据，不再单独请求 sysData
+  const { event: contextEvent } = useEventData()
+
+  /**
+   * 获取参赛名单数据
+   * 改进：直接从 Context 获取 event 信息，省去了之前的 sysData 请求
+   */
   const fetchFn = useCallback(async (isPolling: boolean, etag?: string) => {
     if (!params?.sportCode || !params?.name) return null
 
-    let currentEvent = event
-    if (!currentEvent) {
-      const sysResponse = await fetch("/api/batchFetch", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sportCode: params.sportCode, requests: [{ key: "sysData", type: "sysData" }] })
-      })
-      if (sysResponse.ok) {
-        const sysRes = await sysResponse.json()
-        // NOTE: batchFetch 无 etag 时返回 { sysData: [...] }，有 etag 时返回 { data: { sysData: [...] } }
-        const sysDataArr = sysRes.data?.sysData || sysRes.sysData
-        const evt = sysDataArr?.[4]?.find((e: Event) => e.eventCode === decodeURIComponent(params.name))
-        if (evt) { currentEvent = evt; setEvent(evt); }
-      }
-    }
-
+    // 只请求实际需要的参赛名单数据（不再重复请求 sysData）
     const requests = [
       { key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) },
       { key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) }
@@ -111,11 +102,9 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
       return { modified: false }
     }
 
-    if (!currentEvent) return null
-
     const rawResult = isNewFormat ? batchRes.data : batchRes;
     
-    // 归一化处理：确保返回的是“数据集数组” (any[][])
+    // 归一化处理：确保返回的是"数据集数组" (any[][])
     const finalData: any[][] = [];
     const addDataset = (data: any) => {
       if (!data || data.error) return;
@@ -134,14 +123,14 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
     addDataset(rawResult?.startListTeam);
 
     if (finalData.length === 0) {
-      // 没有任何数据，抛出错误以便触发“暂无数据”提示
+      // 没有任何数据，抛出错误以便触发"暂无数据"提示
       throw new Error("500: No participant data found");
     }
 
     return isNewFormat 
       ? { modified: true, data: finalData, etag: batchRes.etag }
       : finalData;
-  }, [params, event])
+  }, [params])
 
   const { data: participantsData, loading, error: pollError, refresh } = usePolling({
     fetchFn,
@@ -240,7 +229,7 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
       >
         <div className="flex items-center space-x-2">
           <RadioGroupItem value="participant" id="participant" />
-          <Label htmlFor="participant">{event?.typeCode === "T" ? "参赛队伍" : "参赛运动员"}</Label>
+          <Label htmlFor="participant">{contextEvent?.typeCode === "T" ? "参赛队伍" : "参赛运动员"}</Label>
         </div>
         <div className="flex items-center space-x-2">
           <RadioGroupItem value="referee" id="referee" />
@@ -250,15 +239,15 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
 
       <div className="bg-white rounded-lg border overflow-hidden">
         {userType === "participant" ? (
-          event?.typeCode === "T" ? (
+          contextEvent?.typeCode === "T" ? (
             <>
               <div className="grid grid-cols-[60px_1fr] bg-blue-500 text-white text-sm">
                 <div className="p-2 text-center">序号</div>
                 <div className="p-2">队伍信息</div>
               </div>
               {filteredTeams.map((team) => {
-                const teamMembers = filteredTeamMembers.filter((member) => member.teamCode === team.teamCode)
-                const teamOrg = teamMembers.length > 0 ? teamMembers[0].orgName : ""
+                const members = filteredTeamMembers.filter((member) => member.teamCode === team.teamCode)
+                const teamOrg = members.length > 0 ? members[0].orgName : ""
                 return (
                   <div key={team.teamCode} className="grid grid-cols-[60px_1fr] text-sm border-t first:border-t-0">
                     <div className="p-3 text-center">{team.teamOrder}</div>
@@ -266,7 +255,7 @@ export default function ParticipantsPage({ params }: ParticipantsPageProps) {
                       <div className="font-medium">
                         {team.teamName} / {teamOrg}
                       </div>
-                      <div className="mt-1 text-gray-600">{teamMembers.map((member) => member.athName).join("、")}</div>
+                      <div className="mt-1 text-gray-600">{members.map((member) => member.athName).join("、")}</div>
                     </div>
                   </div>
                 )

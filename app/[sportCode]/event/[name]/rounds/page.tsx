@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import LoadingOverlay from "@/components/loading"
 import { Button } from "@/components/ui/button"
 import { usePolling } from "@/hooks/use-polling"
+import { useEventData } from "@/contexts/event-data-context"
 
 interface EventFormat {
   EventID: number
@@ -26,47 +27,21 @@ interface Event {
 
 export default function RoundsPage({ params }: { params: { sportCode: string; name: string } }) {
   const [eventFormat, setEventFormat] = useState<EventFormat | null>(null)
-  const [event, setEvent] = useState<Event | null>(null)
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
+
+  // NOTE: 从 Context 获取事件数据，不再单独请求 sysData
+  const { event: contextEvent } = useEventData()
 
   /**
    * 获取比赛轮次数据
-   * 多步依赖获取：sysData → event → startList/startListTeam → formatData
+   * 改进：直接从 Context 获取 event 信息，省去了之前的 sysData 请求
    */
   const fetchFn = useCallback(async (isPolling: boolean, etag?: string) => {
     if (!params?.sportCode || !params?.name) return null
 
-    let currentEvent = event
-
-    // 首次获取 event 信息
+    const currentEvent = contextEvent
     if (!currentEvent) {
-      try {
-        const sysResponse = await fetch("/api/batchFetch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sportCode: params.sportCode,
-            requests: [{ key: "sysData", type: "sysData" }],
-          }),
-        })
-        if (sysResponse.ok) {
-          const sysData = await sysResponse.json()
-          const sysDataArr = sysData.data?.sysData || sysData.sysData
-          const eventList = sysDataArr?.[4]
-          if (Array.isArray(eventList)) {
-            currentEvent = eventList.find(
-              (e: Event) => e.eventCode === decodeURIComponent(params.name),
-            )
-            if (currentEvent) setEvent(currentEvent)
-          }
-        }
-      } catch (e) {
-        console.error("Fallback fetch failed", e)
-      }
-    }
-
-    if (!currentEvent) {
-      console.error("Could not determine event data")
+      // Context 还没有数据，等待下次轮询
       return null
     }
 
@@ -79,7 +54,7 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
     // 根据 typeCode 决定请求的 directory
     const directory = typeCode === "T" ? "startListTeam" : "startList"
 
-    // 合并为单次 batchFetch 请求
+    // 只请求实际需要的格式数据（不再重复请求 sysData）
     const batchResponse = await fetch("/api/batchFetch", {
       method: "POST",
       headers: {
@@ -113,11 +88,12 @@ export default function RoundsPage({ params }: { params: { sportCode: string; na
     }
 
     return { ...result, _typeCode: typeCode }
-  }, [params, event])
+  }, [params, contextEvent])
 
   const { data: pollingData, loading, error: pollError, refresh } = usePolling<Record<string, any>>({
     fetchFn,
-    enabled: !!params?.sportCode && !!params?.name,
+    // NOTE: 只有 Context 中有事件数据时才开始轮询
+    enabled: !!params?.sportCode && !!params?.name && !!contextEvent,
     cacheKey: `rounds_${params.sportCode}_${params.name}`,
   })
 

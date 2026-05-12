@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import LoadingOverlay from "@/components/loading"
 import { usePolling } from "@/hooks/use-polling"
+import { useEventData } from "@/contexts/event-data-context"
 
 interface CheckInRecord {
   athleteName: string
@@ -31,43 +32,18 @@ export default function CheckInPage({ params }: CheckInPageProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [checkInData, setCheckInData] = useState<CheckInRecord[]>([])
   const [error, setError] = useState<{ type: "no_data" | "other"; message: string } | null>(null)
-  const [event, setEvent] = useState<Event | null>(null)
+
+  // NOTE: 从 Context 获取事件数据，不再单独请求 sysData
+  const { event: contextEvent } = useEventData()
 
   /**
    * 获取检录数据
-   * 使用 batchFetch + ETag 减少带宽消耗
+   * 改进：直接从 Context 获取 event 信息，省去了之前的 sysData 请求
    */
   const fetchFn = useCallback(async (isPolling: boolean, etag?: string) => {
     if (!params?.sportCode || !params?.name) return null
 
-    // 首次获取 event 信息
-    let currentEvent = event
-    if (!currentEvent) {
-      try {
-        const sysResponse = await fetch("/api/batchFetch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sportCode: params.sportCode,
-            requests: [{ key: "sysData", type: "sysData" }],
-          }),
-        })
-        if (sysResponse.ok) {
-          const sysRes = await sysResponse.json()
-          const sysDataArr = sysRes.data?.sysData || sysRes.sysData
-          const evt = sysDataArr?.[4]?.find(
-            (e: Event) => e.eventCode === decodeURIComponent(params.name),
-          )
-          if (evt) {
-            currentEvent = evt
-            setEvent(evt)
-          }
-        }
-      } catch (err) {
-        console.error(err)
-      }
-    }
-
+    // 只请求实际需要的检录数据（不再重复请求 sysData）
     const requests = [
       { key: "startList", directory: "startList", eventCode: decodeURIComponent(params.name) },
       { key: "startListTeam", directory: "startListTeam", eventCode: decodeURIComponent(params.name) },
@@ -99,13 +75,13 @@ export default function CheckInPage({ params }: CheckInPageProps) {
       // 附带 event 信息以便消费端处理
       return {
         modified: true,
-        data: { ...result.data, _event: currentEvent },
+        data: { ...result.data, _event: contextEvent },
         etag: result.etag,
       }
     }
 
-    return { ...result, _event: currentEvent }
-  }, [params, event])
+    return { ...result, _event: contextEvent }
+  }, [params, contextEvent])
 
   const { data: pollingData, loading, error: pollError, refresh } = usePolling<Record<string, any>>({
     fetchFn,
@@ -118,7 +94,7 @@ export default function CheckInPage({ params }: CheckInPageProps) {
     if (!pollingData) return
 
     try {
-      const currentEvent = pollingData._event || event
+      const currentEvent = pollingData._event || contextEvent
       if (!currentEvent) return
 
       const isTeamEvent = currentEvent.typeCode === "T"
@@ -172,7 +148,7 @@ export default function CheckInPage({ params }: CheckInPageProps) {
         })
       }
     }
-  }, [pollingData, event])
+  }, [pollingData, contextEvent])
 
   // 错误状态映射
   useEffect(() => {

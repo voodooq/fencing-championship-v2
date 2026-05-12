@@ -1,66 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
+import { fetchWithCache } from "@/lib/server-cache"
 
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
 
 const dataFiles = [{ name: "sysData", url: "sysData.txt" }]
-
-// NOTE: 内存缓存，多个客户端共享同一份数据，避免每次请求都回源 OSS
-const memoryCache: Record<string, { data: any; expiry: number }> = {}
-// NOTE: 请求合并，相同 URL 的并发请求只发一次
-const inflightRequests: Record<string, Promise<any> | undefined> = {}
-
-/**
- * 带内存缓存和请求合并的 OSS 数据获取
- * 缓存有效期内直接返回，过期后返回旧数据并后台刷新（SWR 模式）
- */
-async function fetchWithCache(url: string): Promise<any> {
-  const now = Date.now()
-  const cacheDuration = SERVER_CACHE_DURATION * 1000
-
-  // SWR: 缓存命中直接返回，过期则返回旧数据 + 后台刷新
-  if (memoryCache[url]) {
-    if (memoryCache[url].expiry > now) {
-      return memoryCache[url].data
-    } else {
-      // 过期但有旧数据 → 返回旧数据，后台刷新
-      fetchFromOSS(url, cacheDuration).catch(err =>
-        console.error(`[getAllData SWR] Background refresh failed for ${url}:`, err)
-      )
-      return memoryCache[url].data
-    }
-  }
-
-  return fetchFromOSS(url, cacheDuration)
-}
-
-async function fetchFromOSS(url: string, cacheDuration: number): Promise<any> {
-  // 请求合并：同一 URL 只发一次请求
-  if (inflightRequests[url] !== undefined) {
-    return inflightRequests[url]
-  }
-
-  const fetchPromise = (async () => {
-    try {
-      const response = await fetch(url, {
-        next: { revalidate: SERVER_CACHE_DURATION },
-      })
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`)
-      }
-      const text = await response.text()
-      const data = JSON.parse(text)
-      memoryCache[url] = { data, expiry: Date.now() + cacheDuration }
-      return data
-    } finally {
-      delete inflightRequests[url]
-    }
-  })()
-
-  inflightRequests[url] = fetchPromise
-  return fetchPromise
-}
 
 export async function GET(request: NextRequest) {
   try {

@@ -1,29 +1,17 @@
 "use client"
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { useMemo } from "react"
 import { ChevronLeft, ChevronUp } from "lucide-react"
 import Link from "next/link"
-import { DATA_POLLING_INTERVAL } from "@/config/site"
 import { cn } from "@/lib/utils"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname } from "next/navigation"
 import LoadingOverlay from "@/components/loading"
-import { buildApiUrl, buildSportPath } from "../../../../lib/sport-config"
+import { buildSportPath } from "../../../../lib/sport-config"
 import { isValidSportCode, getSportConfig } from "../../../../config/sports"
 import { Button } from "@/components/ui/button"
 import React from "react"
 import { useTestMode } from "../../../../hooks/use-test-mode"
-
-interface Event {
-  eventId: number
-  eventCode: string
-  eventName: string
-  competitionNo: number
-  typeCode: string
-}
-
-interface AllData {
-  sysData: [any, any, any, any, Event[]]
-}
+import { EventDataProvider, useEventData } from "@/contexts/event-data-context"
 
 interface ApiError {
   error: string
@@ -54,7 +42,11 @@ const BackToTopButton = ({ isModalOpen = false }: { isModalOpen?: boolean }) => 
   )
 }
 
-export default function EventLayout({
+/**
+ * Event Layout 的内部组件
+ * 从 EventDataContext 中获取共享的事件数据
+ */
+function EventLayoutInner({
   children,
   params,
 }: {
@@ -62,20 +54,19 @@ export default function EventLayout({
   params: { sportCode: string; name: string }
 }) {
   const pathname = usePathname()
-  const router = useRouter()
-  const [allData, setAllData] = useState<AllData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<ApiError | null>(null)
-  const [event, setEvent] = useState<Event | null>(null)
-  const [isModalOpen, setIsModalOpen] = useState(false)
   const isTestMode = useTestMode()
+  const { event, loading, error: dataError, refresh } = useEventData()
 
-  // NOTE: 指数退避相关 ref，数据无变化时逐步延长轮询间隔
-  const MAX_LAYOUT_INTERVAL = 60000
-  const lastDataStringRef = useRef<string>("")
-  const unchangedCountRef = useRef<number>(0)
-  const currentIntervalRef = useRef<number>(DATA_POLLING_INTERVAL)
-  const timerIdRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // NOTE: 将 Context 错误映射为 ApiError 格式
+  const error: ApiError | null = useMemo(() => {
+    if (!dataError) return null
+    return {
+      error: "FETCH_ERROR",
+      message: "数据加载失败",
+      details: dataError instanceof Error ? dataError.message : String(dataError),
+      sportCode: params.sportCode,
+    }
+  }, [dataError, params.sportCode])
 
   const topRowTabs = useMemo(
     () => [
@@ -102,151 +93,12 @@ export default function EventLayout({
     return baseTabs
   }, [event]) // Depend on event to recalculate when it changes
 
-  // Move validation inside useEffect after params are available
-  useEffect(() => {
-    if (params?.sportCode && params?.name) {
-      // 验证 sportCode 格式是否有效
-      if (!isValidSportCode(params.sportCode)) {
-        setError({
-          error: "INVALID_SPORT_CODE",
-          message: "项目代码格式无效",
-          details: `项目代码 "${params.sportCode}" 格式不正确。`,
-          sportCode: params.sportCode,
-        })
-        setLoading(false)
-        return
-      }
-
-      const load = () => {
-        fetchData().catch((error) => {
-          console.error("Error in useEffect:", error)
-          setError({
-            error: "UNKNOWN_ERROR",
-            message: "发生未知错误",
-            details: `${error instanceof Error ? error.message : JSON.stringify(error)}`,
-            sportCode: params.sportCode,
-          })
-        })
-      }
-
-      load()
-
-      // NOTE: 递归 setTimeout 替代 setInterval，实现动态间隔（指数退避）
-      const scheduleNext = () => {
-        timerIdRef.current = setTimeout(() => {
-          fetchData(true).finally(() => {
-            // 请求完成后再安排下一轮，避免请求堆积
-            scheduleNext()
-          })
-        }, currentIntervalRef.current)
-      }
-      scheduleNext()
-
-      // NOTE: 可见性感知 — 切回前台时立即刷新，后台时浏览器自动节流
-      const handleVisibility = () => {
-        if (document.visibilityState === "visible") {
-          fetchData(true)
-        }
-      }
-      document.addEventListener("visibilitychange", handleVisibility)
-
-      return () => {
-        if (timerIdRef.current) {
-          clearTimeout(timerIdRef.current)
-        }
-        document.removeEventListener("visibilitychange", handleVisibility)
-      }
-    }
-  }, [params])
-
-  const setModalState = (isOpen: boolean) => {
-    setIsModalOpen(isOpen)
-  }
-
-  const fetchData = useCallback(async (isPolling = false) => {
-    if (!params?.sportCode || !params?.name) return
-
-    try {
-      if (!isPolling) setLoading(true)
-      setError(null)
-
-      const response = await fetch(
-        buildApiUrl("/api/getAllData", {}, params.sportCode),
-      )
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-
-        if (errorData.error === "SPORT_CODE_NOT_FOUND") {
-          setError({
-            error: "SPORT_CODE_NOT_FOUND",
-            message: `项目 "${params.sportCode}" 不存在`,
-            details: "无法找到对应项目数据，请检查项目代码或数据源路径配置。",
-            sportCode: params.sportCode,
-            attemptedUrl: errorData.attemptedUrl,
-          })
-          router.replace("/")
-          return
-        } else {
-          setError({
-            error: "HTTP_ERROR",
-            message: `请求失败 (${response.status})`,
-            details: `服务器返回 ${response.status} 错误，请稍后重试。`,
-            sportCode: params.sportCode,
-          })
-        }
-        return
-      }
-
-      const data: AllData = await response.json()
-
-      // NOTE: 数据变化检测 — 只有数据真正变化时才更新状态
-      const dataString = JSON.stringify(data)
-      if (dataString !== lastDataStringRef.current) {
-        lastDataStringRef.current = dataString
-        // 数据变化 → 重置退避，恢复初始间隔
-        unchangedCountRef.current = 0
-        currentIntervalRef.current = DATA_POLLING_INTERVAL
-        setAllData(data)
-      } else {
-        // 数据未变化 → 递增退避计数，延长下次轮询间隔
-        unchangedCountRef.current += 1
-        currentIntervalRef.current = Math.min(
-          DATA_POLLING_INTERVAL * Math.pow(2, unchangedCountRef.current),
-          MAX_LAYOUT_INTERVAL
-        )
-      }
-
-      const currentEvent = data.sysData[4].find((e) => e.eventCode === decodeURIComponent(params.name))
-      if (!currentEvent) {
-        setError({
-          error: "EVENT_NOT_FOUND",
-          message: "赛事不存在",
-          details: `在项目 "${params.sportCode}" 中找不到赛事 "${params.name}"`,
-          sportCode: params.sportCode,
-        })
-        return
-      }
-      setEvent(currentEvent)
-    } catch (error) {
-      console.error("Error fetching data:", error)
-      setError({
-        error: "NETWORK_ERROR",
-        message: "网络连接失败",
-        details: `无法连接到服务器: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
-        sportCode: params.sportCode,
-      })
-    } finally {
-      if (!isPolling) setLoading(false)
-    }
-  }, [params, router])
-
-  if (!params?.sportCode || !params?.name || loading) {
-    return <LoadingOverlay />
-  }
-
   // 获取运动项目配置（可能是动态生成的）
   const sportConfig = getSportConfig(params.sportCode)
+
+  if (!params?.sportCode || !params?.name || (loading && !event)) {
+    return <LoadingOverlay />
+  }
 
   if (error) {
     return (
@@ -278,7 +130,7 @@ export default function EventLayout({
             )}
 
             <div className="flex flex-col gap-3 pt-4">
-              <Button onClick={() => fetchData().catch(console.error)} className="w-full">
+              <Button onClick={() => refresh()} className="w-full">
                 重新加载
               </Button>
 
@@ -366,14 +218,60 @@ export default function EventLayout({
           </div>
         </div>
 
+        {/* NOTE: 通过 cloneElement 传递 event 信息给子页面（向后兼容） */}
         {React.cloneElement(children as React.ReactElement<any>, {
           typeCode: event.typeCode,
           event: event,
-          setModalOpen: setModalState,
           sportCode: params.sportCode,
         })}
       </div>
-      <BackToTopButton isModalOpen={isModalOpen} />
+      <BackToTopButton />
     </div>
+  )
+}
+
+/**
+ * Event Layout 外层组件
+ * 负责 sportCode 格式校验和 EventDataProvider 包裹
+ *
+ * 改进点：
+ * 1. 使用 EventDataProvider + usePolling 替代手动 setTimeout + getAllData
+ * 2. 获得 ETag 指纹比对、指数退避、可见性感知等优化
+ * 3. 子页面通过 useEventData() 共享数据，不再重复请求 sysData
+ */
+export default function EventLayout({
+  children,
+  params,
+}: {
+  children: React.ReactNode
+  params: { sportCode: string; name: string }
+}) {
+  // 验证 sportCode 格式
+  if (params?.sportCode && !isValidSportCode(params.sportCode)) {
+    return (
+      <div className="flex flex-col min-h-screen bg-gray-50">
+        <header className="flex items-center h-12 px-4 border-b bg-white">
+          <Link href="/" className="p-1.5 -ml-1.5">
+            <ChevronLeft className="h-5 w-5" />
+          </Link>
+          <h1 className="flex-1 text-center text-base font-medium">格式无效</h1>
+        </header>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-6 text-center space-y-4">
+            <div className="text-red-500 text-6xl mb-4">⚠️</div>
+            <h2 className="text-2xl font-bold text-gray-900">项目代码格式无效</h2>
+            <p className="text-sm text-gray-500">
+              项目代码 &quot;{params.sportCode}&quot; 格式不正确。
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <EventDataProvider sportCode={params.sportCode} eventName={params.name}>
+      <EventLayoutInner params={params}>{children}</EventLayoutInner>
+    </EventDataProvider>
   )
 }

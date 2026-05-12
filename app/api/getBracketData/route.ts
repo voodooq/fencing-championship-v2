@@ -1,57 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
+import { fetchWithCache } from "@/lib/server-cache"
 
 // Get the base URL from environment variable
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
-
-// NOTE: 内存缓存和请求合并，减少 OSS 回源
-const memoryCache: Record<string, { data: any; expiry: number }> = {}
-const inflightRequests: Record<string, Promise<any> | undefined> = {}
-
-async function fetchWithCache(url: string): Promise<any> {
-  const now = Date.now()
-  const cacheDuration = SERVER_CACHE_DURATION * 1000
-
-  if (memoryCache[url]) {
-    if (memoryCache[url].expiry > now) {
-      return memoryCache[url].data
-    } else {
-      fetchFromOSS(url, cacheDuration).catch(err =>
-        console.error(`[getBracketData SWR] Background refresh failed:`, err)
-      )
-      return memoryCache[url].data
-    }
-  }
-
-  return fetchFromOSS(url, cacheDuration)
-}
-
-async function fetchFromOSS(url: string, cacheDuration: number): Promise<any> {
-  if (inflightRequests[url] !== undefined) {
-    return inflightRequests[url]
-  }
-
-  const fetchPromise = (async () => {
-    try {
-      const response = await fetch(url, {
-        next: { revalidate: SERVER_CACHE_DURATION },
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`)
-      }
-
-      const data = await response.json()
-      memoryCache[url] = { data, expiry: Date.now() + cacheDuration }
-      return data
-    } finally {
-      delete inflightRequests[url]
-    }
-  })()
-
-  inflightRequests[url] = fetchPromise
-  return fetchPromise
-}
 
 export async function GET(request: NextRequest) {
     const url = new URL(request.url)

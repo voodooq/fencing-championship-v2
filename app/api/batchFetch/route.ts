@@ -1,83 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server"
-import crypto from "crypto"
+import { fetchWithCache, getCacheVersion, computeEtag } from "@/lib/server-cache"
+import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
 
 // Get the base URL from environment variable
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
-
-import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
-
-// Basic in-memory cache
-const memoryCache: Record<string, { data: any; expiry: number }> = {}
-// Max items in cache to prevent memory pressure
-const MAX_CACHE_ITEMS = 500
-// Track active requests to collapse simultaneous identical requests
-const inflightRequests: Record<string, Promise<any> | undefined> = {}
-
-async function fetchWithCache(url: string, cacheDuration: number, signal?: AbortSignal) {
-    const now = Date.now()
-
-    // 1. SWR Logic: If cache exists but is expired, return stale data and revalidate in background
-    if (memoryCache[url]) {
-        if (memoryCache[url].expiry > now) {
-            return memoryCache[url].data
-        } else {
-            // Stale data exists, start background revalidation
-            console.log(`[SWR] Revalidating stale data: ${url}`)
-            // Trigger background fetch (don't await it here)
-            fetchWithCacheInternal(url, cacheDuration).catch(err => console.error(`[SWR] Background revalidation failed for ${url}:`, err))
-            return memoryCache[url].data
-        }
-    }
-
-    return fetchWithCacheInternal(url, cacheDuration, signal)
-}
-
-async function fetchWithCacheInternal(url: string, cacheDuration: number, signal?: AbortSignal) {
-    // 2. Request Collapsing: If a request for this URL is already in flight, wait for it
-    if (inflightRequests[url] !== undefined) {
-        console.log(`[Collapsing] Sharing in-flight request: ${url}`)
-        return inflightRequests[url]
-    }
-
-    const fetchPromise = (async () => {
-        try {
-            const response = await fetch(url, {
-                next: { revalidate: Math.floor(cacheDuration / 1000) },
-                signal: signal
-            })
-
-            // Handle 404 - Negative Caching
-            if (response.status === 404) {
-                const negativeCacheDuration = 5000 // Cache 404s for 5 seconds
-                memoryCache[url] = {
-                    data: { error: true, status: 404, message: "File not found" },
-                    expiry: Date.now() + negativeCacheDuration
-                }
-                return memoryCache[url].data
-            }
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`)
-            }
-            const data = await response.json()
-
-            // Basic LRU-like management: if cache too large, clear oldest (or just reset)
-            if (Object.keys(memoryCache).length >= MAX_CACHE_ITEMS) {
-                const oldestKey = Object.keys(memoryCache)[0]
-                delete memoryCache[oldestKey]
-            }
-
-            memoryCache[url] = { data, expiry: Date.now() + cacheDuration }
-            return data
-        } finally {
-            // Clean up inflight tracking
-            delete inflightRequests[url]
-        }
-    })()
-
-    inflightRequests[url] = fetchPromise
-    return fetchPromise
-}
 
 export async function POST(request: NextRequest) {
     try {
@@ -91,11 +17,14 @@ export async function POST(request: NextRequest) {
 
         const dynamicBaseUrl = `${BASE_URL}/${sportCode}`
         const results: Record<string, any> = {}
-        // NOTE: 使用服务端缓存时长，而非客户端轮询间隔，减少回源频率
+        // NOTE: 使用服务端缓存时长，减少回源频率
         const cacheDuration = SERVER_CACHE_DURATION * 1000
 
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 10000) // 10s timeout
+
+        // 记录每个请求 key 对应的 URL，用于版本号查询
+        const keyUrlMap: Record<string, string[]> = {}
 
         try {
             await Promise.all(
@@ -106,11 +35,14 @@ export async function POST(request: NextRequest) {
                     // Special handling for fullBracket composite request
                     if (type === "fullBracket") {
                         const phasesUrl = `${dynamicBaseUrl}/dualPhase/${eventCode}.txt`
+                        keyUrlMap[key] = [phasesUrl]
                         try {
                             const phases = await fetchWithCache(phasesUrl, cacheDuration, controller.signal)
                             if (Array.isArray(phases)) {
+                                const matchUrls: string[] = []
                                 const matchPromises = phases.map(async (phase: any) => {
                                     const matchUrl = `${dynamicBaseUrl}/dualPhaseMatch/${phase.phaseId}.txt`
+                                    matchUrls.push(matchUrl)
                                     const matches = await fetchWithCache(matchUrl, cacheDuration, controller.signal).catch(() => [])
                                     return {
                                         ...phase,
@@ -118,6 +50,7 @@ export async function POST(request: NextRequest) {
                                     }
                                 })
                                 results[key] = await Promise.all(matchPromises)
+                                keyUrlMap[key] = [phasesUrl, ...matchUrls]
                             } else {
                                 results[key] = phases
                             }
@@ -141,6 +74,8 @@ export async function POST(request: NextRequest) {
                         }
                     }
 
+                    keyUrlMap[key] = [url]
+
                     try {
                         const data = await fetchWithCache(url, cacheDuration, controller.signal)
                         results[key] = data
@@ -158,18 +93,23 @@ export async function POST(request: NextRequest) {
             clearTimeout(timeoutId)
         }
 
-        // Calculate hash for the entire results object
-        const resultsString = JSON.stringify(results)
-        const serverEtag = crypto.createHash("md5").update(resultsString).digest("hex")
+        // NOTE: 基于版本号的轻量 ETag 计算
+        // 每个缓存条目在数据变化时会递增版本号，
+        // 这里只需拼接版本号字符串，CPU 开销可忽略不计
+        // 相比之前 JSON.stringify(results) + MD5(100KB+) 的方式，性能提升数十倍
+        const versionMap: Record<string, number> = {}
+        for (const [key, urls] of Object.entries(keyUrlMap)) {
+            // 对于 fullBracket 等多 URL 的 key，取所有 URL 版本号之和
+            versionMap[key] = urls.reduce((sum, u) => sum + getCacheVersion(u), 0)
+        }
+        const serverEtag = computeEtag(versionMap)
 
-        // If client provided an etag and it matches, return "not modified"
         // NOTE: Cache-Control 让 CDN 缓存此响应，减少回源
-        // s-maxage: CDN 缓存时长（10s 内直接返回）
-        // stale-while-revalidate: 过期后 CDN 仍可用旧数据 + 后台刷新（消除回源等待）
         const cacheHeaders = {
             "Cache-Control": `public, max-age=${SERVER_CACHE_DURATION}, s-maxage=${SERVER_CACHE_DURATION}, stale-while-revalidate=${CDN_STALE_REVALIDATE}`,
         }
 
+        // 如果客户端 ETag 匹配，返回 "not modified"（几乎零传输）
         if (clientEtag === serverEtag) {
             return NextResponse.json({ modified: false, etag: serverEtag }, { headers: cacheHeaders })
         }

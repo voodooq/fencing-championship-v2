@@ -1,16 +1,15 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useMemo, useCallback } from "react"
 import Header from "../../components/header"
 import Banner from "../../components/banner"
 import Filters from "../../components/filters"
 import Schedule from "../../components/schedule"
 import LoadingOverlay from "../../components/loading"
-import { buildApiUrl } from "../../lib/sport-config"
 import { isValidSportCode } from "../../config/sports"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
-import { DATA_POLLING_INTERVAL } from "@/config/site"
+import { usePolling } from "@/hooks/use-polling"
 
 interface Event {
   eventId: number
@@ -48,135 +47,107 @@ interface ApiError {
 }
 
 export default function SportHomePage({ params }: { params: { sportCode: string } }) {
-  const [allData, setAllData] = useState<AllData | null>(null)
   const [error, setError] = useState<ApiError | null>(null)
   const [selectedDate, setSelectedDate] = useState<string>("all")
   const [selectedType, setSelectedType] = useState<string>("all")
   const [selectedGender, setSelectedGender] = useState<string>("all")
   const [selectedWeapon, setSelectedWeapon] = useState<string>("all")
-  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (params?.sportCode) {
-      // 验证 sportCode 格式是否有效（不再检查是否在预定义列表中）
-      if (!isValidSportCode(params.sportCode)) {
-        setError({
-          error: "INVALID_SPORT_CODE",
-          message: "项目代码格式无效",
-          details: `项目代码 "${params.sportCode}" 格式不正确。`,
-          sportCode: params.sportCode,
-        })
-        setLoading(false)
-        return
-      }
+  /**
+   * 通过 batchFetch 获取首页数据
+   * 改进：
+   * 1. 使用 batchFetch 替代 getAllData，获得 ETag 指纹比对支持
+   * 2. 通过 usePolling 获得指数退避和可见性感知
+   * 3. 同时获取 sysData 和 eventState，减少请求次数
+   */
+  const fetchFn = useCallback(async (_isPolling: boolean, etag?: string) => {
+    if (!params?.sportCode) return null
 
-      fetchData()
-
-      const intervalId = setInterval(() => fetchData(true), DATA_POLLING_INTERVAL)
-
-      // NOTE: 可见性感知 — 切回前台时立即刷新，后台时浏览器自动节流
-      const handleVisibility = () => {
-        if (document.visibilityState === "visible") {
-          fetchData(true)
-        }
-      }
-      document.addEventListener("visibilitychange", handleVisibility)
-
-      return () => {
-        clearInterval(intervalId)
-        document.removeEventListener("visibilitychange", handleVisibility)
-      }
-    }
-  }, [params])
-
-  const fetchData = async (isPolling = false) => {
-    if (!params?.sportCode) return
-
-    try {
-      if (!isPolling) setLoading(true)
-      setError(null)
-
-      const response = await fetch(
-        buildApiUrl("/api/getAllData", {}, params.sportCode),
-      )
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-
-        if (errorData.error === "SPORT_CODE_NOT_FOUND") {
-          setError({
-            error: "SPORT_CODE_NOT_FOUND",
-            message: `项目 "${params.sportCode}" 不存在`,
-            details: "无法找到对应项目数据，请检查项目代码或数据源路径配置。",
-            sportCode: params.sportCode,
-            attemptedUrl: errorData.attemptedUrl,
-          })
-        } else {
-          setError({
-            error: "HTTP_ERROR",
-            message: `请求失败 (${response.status})`,
-            details: `服务器返回 ${response.status} 错误，请稍后重试。`,
-            sportCode: params.sportCode,
-          })
-        }
-        return
-      }
-
-      const data = await response.json()
-
-      if (data.error) {
-        if (data.error === "SPORT_CODE_NOT_FOUND") {
-          setError({
-            error: "SPORT_CODE_NOT_FOUND",
-            message: `项目 "${params.sportCode}" 不存在`,
-            details: "无法找到对应项目数据，请检查项目代码或数据源路径配置。",
-            sportCode: params.sportCode,
-            attemptedUrl: data.attemptedUrl,
-          })
-          return
-        }
-        setError(data as ApiError)
-        return
-      }
-
-      if (!data || !data.sysData || !Array.isArray(data.sysData) || data.sysData.length < 6) {
-        setError({
-          error: "INVALID_DATA_STRUCTURE",
-          message: "数据结构无效",
-          details: "服务器返回的数据格式不正确，请联系管理员。",
-          sportCode: params.sportCode,
-        })
-        return
-      }
-
-      // Process the data to include statusDes
-      const processedData = {
-        ...data,
-        sysData: [
-          ...data.sysData.slice(0, 4),
-          data.sysData[4].map((event: Event) => ({
-            ...event,
-            statusDes:
-              data.sysData[5].find((status: { EventID: number; StatusDes: string }) => status.EventID === event.eventId)
-                ?.StatusDes || "",
-          })),
-          data.sysData[5],
-        ],
-      }
-
-      setAllData(processedData)
-    } catch (error) {
-      console.error("Error fetching data:", error)
+    // 验证 sportCode 格式
+    if (!isValidSportCode(params.sportCode)) {
       setError({
-        error: "NETWORK_ERROR",
-        message: "网络连接失败",
-        details: `无法连接到服务器，请检查网络连接后重试。错误详情: ${error instanceof Error ? error.message : String(error)}`,
+        error: "INVALID_SPORT_CODE",
+        message: "项目代码格式无效",
+        details: `项目代码 "${params.sportCode}" 格式不正确。`,
         sportCode: params.sportCode,
       })
-    } finally {
-      if (!isPolling) setLoading(false)
+      return null
     }
-  }
+
+    const response = await fetch("/api/batchFetch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(etag ? { "if-none-match": etag } : {}),
+      },
+      body: JSON.stringify({
+        sportCode: params.sportCode,
+        requests: [
+          { key: "sysData", type: "sysData" },
+          { key: "eventState", directory: "eventState", eventCode: "eventState" },
+        ],
+      }),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      if (errorData.error === "SPORT_CODE_NOT_FOUND") {
+        setError({
+          error: "SPORT_CODE_NOT_FOUND",
+          message: `项目 "${params.sportCode}" 不存在`,
+          details: "无法找到对应项目数据，请检查项目代码或数据源路径配置。",
+          sportCode: params.sportCode,
+          attemptedUrl: errorData.attemptedUrl,
+        })
+        return null
+      }
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const result = await response.json()
+
+    // ETag 新格式处理
+    if (result && typeof result === "object" && "modified" in result) {
+      if (result.modified === false) {
+        return { modified: false }
+      }
+      return { modified: true, data: result.data, etag: result.etag }
+    }
+
+    return result
+  }, [params])
+
+  const { data: pollingData, loading, refresh } = usePolling<Record<string, any>>({
+    fetchFn,
+    enabled: !!params?.sportCode,
+    cacheKey: `home_${params.sportCode}`,
+  })
+
+  // 从轮询数据中提取 allData
+  const allData = useMemo<AllData | null>(() => {
+    if (!pollingData?.sysData) return null
+    if (!Array.isArray(pollingData.sysData) || pollingData.sysData.length < 6) return null
+
+    // 获取 eventState（优先从单独请求的 eventState 获取，回退到 sysData[5]）
+    const eventStates = pollingData.eventState || pollingData.sysData[5] || []
+
+    // Process the data to include statusDes
+    return {
+      sysData: [
+        pollingData.sysData[0],
+        pollingData.sysData[1],
+        pollingData.sysData[2],
+        pollingData.sysData[3],
+        pollingData.sysData[4].map((event: Event) => ({
+          ...event,
+          statusDes:
+            eventStates.find((status: { EventID: number; StatusDes: string }) => status.EventID === event.eventId)
+              ?.StatusDes || "",
+        })),
+        eventStates,
+      ],
+    }
+  }, [pollingData])
 
   const processedData = useMemo(() => {
     if (!allData) return null
@@ -184,7 +155,7 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
       dates: Array.from(new Set(allData.sysData[4].map((event) => event.formattedDate))),
       weapons: allData.sysData[1],
       genders: allData.sysData[2],
-      types: allData.sysData[3], // Using the correct index for types
+      types: allData.sysData[3],
     }
   }, [allData])
 
@@ -193,26 +164,18 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
 
     const normalize = (v: any) => String(v ?? "").trim().toUpperCase()
 
-    // Dev-only: dump seen genderCode values to help diagnose inconsistent data
-    if (process.env.NODE_ENV !== "production") {
-      const seen = Array.from(new Set(allData.sysData[4].map((e) => String(e.genderCode ?? "").trim())))
-      console.debug("DEBUG: seen genderCode values:", seen)
-    }
-
     const mapGender = (v: any) => {
       const n = normalize(v)
       if (!n) return ""
-      // Map known aliases to canonical codes
-      if (n === "F") return "W" // some data uses 'F' for female
+      if (n === "F") return "W"
       if (n === "W") return "W"
       if (n === "M") return "M"
-      // handle Chinese values just in case
       if (String(v).includes("女子") || String(v).includes("女")) return "W"
       if (String(v).includes("男子") || String(v).includes("男")) return "M"
       return n
     }
 
-    const results = allData.sysData[4].filter((event) => {
+    return allData.sysData[4].filter((event) => {
       const genderCode = mapGender(event.genderCode)
 
       // Fallback: try infer gender from event name when genderCode is missing or empty
@@ -233,26 +196,9 @@ export default function SportHomePage({ params }: { params: { sportCode: string 
         (selectedWeapon === "all" || event.weaponCode === selectedWeapon)
       )
     })
-
-    // Dev-only: if user filtered by gender and got no results, dump some samples to help debugging
-    if (process.env.NODE_ENV !== "production" && selectedGender !== "all" && results.length === 0) {
-      const selectedNormalized = normalize(selectedGender)
-      const selectedMapped = mapGender(selectedGender)
-      const samples = allData.sysData[4].slice(0, 20).map((e) => ({
-        eventId: e.eventId,
-        name: e.eventName,
-        originalGenderCode: e.genderCode,
-        inferred: (String(e.eventName || "").includes("女子") || String(e.eventName || "").includes("女")) ? "W" : (String(e.eventName || "").includes("男子") || String(e.eventName || "").includes("男")) ? "M" : "",
-        normalizedGenderCode: normalize(e.genderCode),
-        mappedGenderCode: mapGender(e.genderCode),
-      }))
-      console.debug("DEBUG: gender filter produced 0 results", { selectedGender, selectedNormalized, selectedMapped, samples })
-    }
-
-    return results
   }, [allData, selectedDate, selectedType, selectedGender, selectedWeapon])
 
-  if (!params?.sportCode || loading) {
+  if (!params?.sportCode || (loading && !allData)) {
     return <LoadingOverlay />
   }
 
