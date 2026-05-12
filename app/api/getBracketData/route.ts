@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     const eventCode = url.searchParams.get("eventCode")
     const sportCode = url.searchParams.get("sportCode")
 
-    if (!eventCode || !sportCode || !isValidSportCode(sportCode) || !/^[a-zA-Z0-9_-]+$/.test(eventCode)) {
+    if (!eventCode || !sportCode || !isValidSportCode(sportCode) || !/^[^./\\]+$/.test(eventCode)) {
         return NextResponse.json({ error: "Missing or invalid required parameters" }, { status: 400 })
     }
 

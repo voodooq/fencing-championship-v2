@@ -24,11 +24,11 @@ export async function GET(request: NextRequest) {
   const phaseId = url.searchParams.get("phaseId")
   const sportCode = url.searchParams.get("sportCode")
 
-  if (!eventCode || !directory || !/^[a-zA-Z0-9_-]+$/.test(eventCode)) {
+  if (!eventCode || !directory || !/^[^./\\]+$/.test(eventCode)) {
     return NextResponse.json({ error: "Missing or invalid required parameters: eventCode and directory" }, { status: 400 })
   }
 
-  if (phaseId && !/^[a-zA-Z0-9_-]+$/.test(phaseId)) {
+  if (phaseId && !/^[^./\\]+$/.test(phaseId)) {
     return NextResponse.json({ error: "Invalid phaseId" }, { status: 400 })
   }
 

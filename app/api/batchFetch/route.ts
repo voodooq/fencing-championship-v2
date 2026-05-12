@@ -34,11 +34,12 @@ export async function POST(request: NextRequest) {
                     let url = ""
 
                     // Validate parameters to prevent SSRF and Path Traversal
-                    if (eventCode && !/^[a-zA-Z0-9_-]+$/.test(eventCode)) {
+                    // eventCode and phaseId can contain Chinese characters, so we just block path separators and dots
+                    if (eventCode && !/^[^./\\]+$/.test(eventCode)) {
                         results[key] = { error: true, message: "Invalid eventCode" }
                         return
                     }
-                    if (phaseId && !/^[a-zA-Z0-9_-]+$/.test(phaseId)) {
+                    if (phaseId && !/^[^./\\]+$/.test(phaseId)) {
                         results[key] = { error: true, message: "Invalid phaseId" }
                         return
                     }
