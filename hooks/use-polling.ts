@@ -24,6 +24,10 @@ interface UsePollingOptions<T> {
  * 3. 数据一旦变化，立即恢复初始间隔
  * 4. 网络离线时暂停轮询，恢复联网后立即刷新
  * 5. ETag 指纹比对，服务端数据未变时几乎零传输
+ *
+ * 性能设计：
+ * - 所有可变状态都通过 Ref 引用，避免 useCallback 依赖变化导致轮询链重建
+ * - executeFetch 的依赖数组稳定，不会因数据更新而重新创建
  */
 export function usePolling<T>({
     fetchFn,
@@ -64,54 +68,60 @@ export function usePolling<T>({
     const isOnlineRef = useRef<boolean>(true)
     // NOTE: 是否有正在进行的请求，防止并发
     const isFetchingRef = useRef<boolean>(false)
+    // NOTE: 通过 Ref 引用 fetchFn，避免 executeFetch 依赖 fetchFn 导致轮询链重建
+    const fetchFnRef = useRef(fetchFn)
+    fetchFnRef.current = fetchFn
+    // NOTE: 通过 Ref 引用 data，避免 updateData 依赖 data 状态导致闭包循环
+    const dataRef = useRef<T | null>(data)
+    dataRef.current = data
+    // NOTE: 通过 Ref 引用 interval 和 cacheKey，避免依赖变化
+    const intervalRef = useRef(interval)
+    intervalRef.current = interval
+    const cacheKeyRef = useRef(cacheKey)
+    cacheKeyRef.current = cacheKey
 
     /**
-     * 更新数据并重置退避计数
-     * NOTE: 使用 ETag 作为变化检测依据时，不再需要客户端做 JSON.stringify 比较
-     *       只有非 ETag 模式（旧版兼容）才需要字符串比较
+     * 写入 sessionStorage 缓存
+     * 异步执行，不阻塞渲染
      */
-    const updateData = useCallback((result: any, isFromEtag: boolean) => {
-        if (isFromEtag) {
-            // ETag 模式：服务端已确认数据变化（modified: true），直接更新
-            setData(result)
-            unchangedCountRef.current = 0
-            currentIntervalRef.current = interval
-            // 异步写入缓存，不阻塞渲染
-            if (cacheKey && typeof window !== "undefined") {
-                try {
-                    sessionStorage.setItem(`cache_poll_${cacheKey}`, JSON.stringify(result))
-                } catch (e) {
-                    // sessionStorage 满了，忽略
-                }
-            }
-        } else {
-            // 旧版兼容模式：通过 JSON 字符串比较检测变化
-            const resultString = JSON.stringify(result)
-            // NOTE: 使用数据长度 + 前100字符做快速初筛，避免每次都完整比较
-            const currentData = data
-            const currentString = currentData ? JSON.stringify(currentData) : ""
-            if (resultString !== currentString) {
-                setData(result)
-                unchangedCountRef.current = 0
-                currentIntervalRef.current = interval
-                if (cacheKey && typeof window !== "undefined") {
-                    try {
-                        sessionStorage.setItem(`cache_poll_${cacheKey}`, resultString)
-                    } catch (e) {
-                        // sessionStorage 满了，忽略
-                    }
-                }
-            } else {
-                // 数据未变化 → 递增退避计数
-                unchangedCountRef.current += 1
-                currentIntervalRef.current = Math.min(
-                    interval * Math.pow(BACKOFF_MULTIPLIER, unchangedCountRef.current),
-                    MAX_POLLING_INTERVAL
-                )
+    const saveToCache = useCallback((result: any) => {
+        const key = cacheKeyRef.current
+        if (key && typeof window !== "undefined") {
+            try {
+                sessionStorage.setItem(`cache_poll_${key}`, JSON.stringify(result))
+            } catch (e) {
+                // sessionStorage 满了，忽略
             }
         }
-    }, [interval, cacheKey, data])
+    }, [])
 
+    /**
+     * 递增退避计数，延长轮询间隔
+     */
+    const incrementBackoff = useCallback(() => {
+        unchangedCountRef.current += 1
+        currentIntervalRef.current = Math.min(
+            intervalRef.current * Math.pow(BACKOFF_MULTIPLIER, unchangedCountRef.current),
+            MAX_POLLING_INTERVAL
+        )
+    }, [])
+
+    /**
+     * 重置退避，恢复初始轮询间隔
+     */
+    const resetBackoff = useCallback(() => {
+        unchangedCountRef.current = 0
+        currentIntervalRef.current = intervalRef.current
+    }, [])
+
+    /**
+     * 核心轮询执行函数
+     *
+     * 关键性能设计：
+     * - 不依赖 data 状态，通过 dataRef 读取当前数据
+     * - 不依赖 fetchFn，通过 fetchFnRef 引用最新版本
+     * - 依赖数组稳定，不会因数据更新导致 useEffect 重新执行
+     */
     const executeFetch = useCallback(
         async (isPolling = false) => {
             // 防止并发请求
@@ -119,41 +129,49 @@ export function usePolling<T>({
             isFetchingRef.current = true
 
             try {
-                // 只有在既不是轮询、也不是初始有缓存数据的情况下，才显示 loading
-                if (!isPolling && isInitialFetchRef.current && !data) {
+                // 只有首次加载且无缓存时才显示 loading
+                if (!isPolling && isInitialFetchRef.current && !dataRef.current) {
                     setLoading(true)
                 }
 
                 // 携带指纹发起请求，减少带宽压力
-                const response = await fetchFn(isPolling, etagRef.current)
-                
+                const response = await fetchFnRef.current(isPolling, etagRef.current)
+
                 // 处理指纹比对逻辑：如果服务器返回未修改，则不更新状态
                 if (response && typeof response === "object" && "modified" in response) {
                     if (response.modified === false) {
                         // 数据未变化 → 递增退避
-                        unchangedCountRef.current += 1
-                        currentIntervalRef.current = Math.min(
-                            interval * Math.pow(BACKOFF_MULTIPLIER, unchangedCountRef.current),
-                            MAX_POLLING_INTERVAL
-                        )
+                        incrementBackoff()
                         if (isInitialFetchRef.current) isInitialFetchRef.current = false
                         return
                     }
-                    
+
                     // 记录新指纹
                     if (response.etag) etagRef.current = response.etag
-                    
+
                     // 提取实际数据
                     const result = response.data
                     if (!result) return
 
-                    updateData(result, true)
+                    // ETag 模式：服务端已确认数据变化，直接更新
+                    setData(result)
+                    resetBackoff()
+                    saveToCache(result)
                 } else {
                     // 兼容旧版或普通返回格式
                     const result = response
                     if (!result) return
-                    
-                    updateData(result, false)
+
+                    // 旧版模式：通过 JSON 比较检测变化
+                    const resultString = JSON.stringify(result)
+                    const currentString = dataRef.current ? JSON.stringify(dataRef.current) : ""
+                    if (resultString !== currentString) {
+                        setData(result)
+                        resetBackoff()
+                        saveToCache(result)
+                    } else {
+                        incrementBackoff()
+                    }
                 }
 
                 if (isInitialFetchRef.current) {
@@ -164,17 +182,14 @@ export function usePolling<T>({
                 console.error("Polling fetch failed:", err)
                 setError(err)
                 // 请求失败也递增退避，避免频繁重试加重后端压力
-                unchangedCountRef.current += 1
-                currentIntervalRef.current = Math.min(
-                    interval * Math.pow(BACKOFF_MULTIPLIER, unchangedCountRef.current),
-                    MAX_POLLING_INTERVAL
-                )
+                incrementBackoff()
             } finally {
                 setLoading(false)
                 isFetchingRef.current = false
             }
         },
-        [fetchFn, cacheKey, interval, updateData, data],
+        // NOTE: 依赖数组极小且稳定，不会因数据变化而重建
+        [incrementBackoff, resetBackoff, saveToCache],
     )
 
     // NOTE: 使用递归 setTimeout 替代 setInterval，实现动态间隔（指数退避）
@@ -204,7 +219,7 @@ export function usePolling<T>({
                 clearTimeout(intervalIdRef.current)
             }
         }
-    }, [executeFetch, interval, enabled, ...deps])
+    }, [executeFetch, enabled, ...deps])
 
     // NOTE: 可见性感知 — 页面切到后台时暂停轮询，切回前台立即刷新
     useEffect(() => {
@@ -214,13 +229,10 @@ export function usePolling<T>({
             if (document.visibilityState === "visible") {
                 isVisibleRef.current = true
                 // 切回前台：重置退避并立即刷新一次数据，确保实时性
-                unchangedCountRef.current = 0
-                currentIntervalRef.current = interval
+                resetBackoff()
                 executeFetch(true)
             } else {
                 isVisibleRef.current = false
-                // NOTE: 页面切到后台，标记不可见
-                // setTimeout 回调中会检查此标记并跳过请求
             }
         }
 
@@ -228,7 +240,7 @@ export function usePolling<T>({
         return () => {
             document.removeEventListener("visibilitychange", handleVisibilityChange)
         }
-    }, [executeFetch, enabled, interval])
+    }, [executeFetch, enabled, resetBackoff])
 
     // NOTE: 网络感知 — 离线时暂停，恢复联网后立即刷新
     useEffect(() => {
@@ -237,8 +249,7 @@ export function usePolling<T>({
         const handleOnline = () => {
             isOnlineRef.current = true
             // 恢复联网：重置退避并立即刷新
-            unchangedCountRef.current = 0
-            currentIntervalRef.current = interval
+            resetBackoff()
             executeFetch(true)
         }
 
@@ -252,7 +263,7 @@ export function usePolling<T>({
             window.removeEventListener("online", handleOnline)
             window.removeEventListener("offline", handleOffline)
         }
-    }, [executeFetch, enabled, interval])
+    }, [executeFetch, enabled, resetBackoff])
 
     return { data, setData, loading, error, refresh: () => executeFetch(false) }
 }

@@ -1,12 +1,15 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-// This API uses request URL and remote resources; mark as dynamic
-export const dynamic = 'force-dynamic'
+// NOTE: 移除了 force-dynamic，让 Next.js 的 ISR (revalidate) 缓存正常工作
+// Banner 图片变化频率极低，不需要每次请求都重新获取
 
 // Get the base URL from environment variable (without sportCode)
 const BASE_URL = process.env.FENCING_API_BASE_URL || "https://yyfencing.oss-cn-beijing.aliyuncs.com/fencingscore"
 
-import { SERVER_CACHE_DURATION, CDN_STALE_REVALIDATE } from "@/config/site"
+import { CDN_STALE_REVALIDATE } from "@/config/site"
+
+// Banner 图片缓存 5 分钟（300 秒），远长于普通数据
+const BANNER_CACHE_DURATION = 300
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url)
